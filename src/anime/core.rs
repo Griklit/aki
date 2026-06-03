@@ -138,6 +138,7 @@ impl Anime {
             })
     }
 
+    #[must_use]
     pub fn bangumi_subject(&self) -> Option<Result<BangumiSubject, io::Error>> {
         Some(BangumiSubject::load_with_id(self.bangumi_id?))
     }
@@ -156,11 +157,10 @@ impl fmt::Display for Anime {
             {
                 format!(
                     "[{}] {} ({})",
-                    &self
-                        .info
-                        .air_date
-                        .map(|d| d.format("%Y-%m-%d").to_string())
-                        .unwrap_or_else(|| "unknown".to_string()),
+                    &self.info.air_date.map_or_else(
+                        || "unknown".to_string(),
+                        |d| d.format("%Y-%m-%d").to_string()
+                    ),
                     &trans_title,
                     &self.info.title
                 )
