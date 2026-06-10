@@ -205,6 +205,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "require-external-internet"]
     async fn request_subject() {
         let ret = Subject::request_with_id(&reqwest::Client::new(), 475354)
             .await

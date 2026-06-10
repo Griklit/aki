@@ -38,3 +38,4 @@ jieba-rs = { version = "0.9" }
 tantivy-jieba = { version = "0.20" }
 lindera = { version = "2", features = ["embed-ipadic"] }
 lindera-tantivy = { path = "./lindera-tantivy", features = ["embed-ipadic"] }
+fjall = { version = "3" }

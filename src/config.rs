@@ -84,6 +84,10 @@ impl Config {
         self.anime_data_path().join(".aki/tantivy-index")
     }
 
+    pub fn anime_fjall_index_path(&self) -> PathBuf {
+        self.anime_data_path().join(".aki/fjall-index")
+    }
+
     pub fn bangumi_subject_path(&self) -> PathBuf {
         self.root.join("bangumi/subject")
     }
