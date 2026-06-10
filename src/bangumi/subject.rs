@@ -161,6 +161,17 @@ pub struct Subject {
 }
 
 impl Subject {
+    pub fn save(&self) -> Result<(), io::Error> {
+        let path = CONFIG
+            .bangumi_subject_path()
+            .join(self.id.to_string())
+            .with_added_extension("json");
+        let file = File::create(path)?;
+        let writer = io::BufWriter::new(file);
+        serde_json::to_writer_pretty(writer, self)?;
+        Ok(())
+    }
+
     pub fn load_with_id(id: i64) -> Result<Self, io::Error> {
         let path = CONFIG
             .bangumi_subject_path()

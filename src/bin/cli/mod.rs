@@ -23,6 +23,6 @@ fn main() {
     match ret {
         Ok(Some(s)) => println!("{}", s),
         Ok(None) => {}
-        Err(e) => eprintln!("{}", e),
+        Err(e) => eprintln!("{:?}", e),
     }
 }

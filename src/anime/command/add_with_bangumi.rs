@@ -1,3 +1,5 @@
+use std::io;
+
 use super::super::{Anime, SaveAnimeError};
 use crate::bangumi::Subject;
 
@@ -6,7 +8,9 @@ pub enum AddWithBangumiError {
     #[error("bangumi request error")]
     BangumiRequest(#[source] reqwest::Error),
     #[error("save anime error")]
-    Save(#[source] SaveAnimeError),
+    SaveAnime(#[source] SaveAnimeError),
+    #[error("save bangumi subject error")]
+    SaveBangumiSubject(#[source] io::Error),
 }
 
 pub async fn add_with_bangumi(
@@ -16,7 +20,12 @@ pub async fn add_with_bangumi(
     let bangumi = Subject::request_with_id(client, bangumi_id)
         .await
         .map_err(AddWithBangumiError::BangumiRequest)?;
+    bangumi
+        .save()
+        .map_err(AddWithBangumiError::SaveBangumiSubject)?;
     let anime: Anime = bangumi.into();
-    anime.save_as_meta_id().map_err(AddWithBangumiError::Save)?;
+    anime
+        .save_as_meta_id()
+        .map_err(AddWithBangumiError::SaveAnime)?;
     Ok(anime)
 }
