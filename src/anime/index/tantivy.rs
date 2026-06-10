@@ -91,7 +91,7 @@ impl Default for AnimeTantivyIndexSchema {
     }
 }
 
-fn cang_jie_tokenizer() -> JiebaTokenizer {
+fn jieba_tokenizer() -> JiebaTokenizer {
     JiebaTokenizer::new()
 }
 
@@ -134,7 +134,7 @@ pub fn build_tantivy_index(context: &AnimeContext) -> Result<usize, BuildTantivy
         .map_err(BuildTantivyIndexError::CreateIndex)?;
     index
         .tokenizers()
-        .register(Language::ZhCn.kind(), cang_jie_tokenizer());
+        .register(Language::ZhCn.kind(), jieba_tokenizer());
     index.tokenizers().register(
         Language::JaJp.kind(),
         lindera_tokenizer()
@@ -195,7 +195,7 @@ pub fn get_tantivy_index() -> Result<Index, GetTantivyIndexError> {
     };
     index
         .tokenizers()
-        .register(Language::ZhCn.kind(), cang_jie_tokenizer());
+        .register(Language::ZhCn.kind(), jieba_tokenizer());
     index.tokenizers().register(
         Language::JaJp.kind(),
         lindera_tokenizer().map_err(E::GetLinderaTOkenizer)?,

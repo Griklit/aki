@@ -147,6 +147,14 @@ impl Anime {
 impl fmt::Display for Anime {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let language = Language::from_str(&CONFIG.locale);
+        write!(
+            f,
+            "[{}] ",
+            self.info.air_date.map_or_else(
+                || "unknown".to_string(),
+                |d| d.format("%Y-%m-%d").to_string()
+            )
+        )?;
         let title: Cow<str> = if let Ok(language) = language {
             let trans = self.internationalizations.get(&language);
             if let Some(AnimeInfoInternationalization {
@@ -155,16 +163,7 @@ impl fmt::Display for Anime {
             }) = trans
                 && trans_title != &self.info.title
             {
-                format!(
-                    "[{}] {} ({})",
-                    &self.info.air_date.map_or_else(
-                        || "unknown".to_string(),
-                        |d| d.format("%Y-%m-%d").to_string()
-                    ),
-                    &trans_title,
-                    &self.info.title
-                )
-                .into()
+                format!("{} ({})", &trans_title, &self.info.title).into()
             } else {
                 Cow::from(&self.info.title)
             }
