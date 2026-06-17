@@ -7,6 +7,7 @@ mod common;
 mod config;
 mod meta;
 mod resource;
+pub mod tile_layout;
 pub mod utils;
 
 pub use anime::{
