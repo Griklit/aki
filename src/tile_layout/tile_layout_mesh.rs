@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap, VecDeque},
+    collections::{BTreeMap, VecDeque},
     fmt::Display,
     hash::Hash,
 };
@@ -17,6 +17,7 @@ impl Position {
     }
 }
 
+#[derive(Debug)]
 pub struct Tile<T> {
     pub item: T,
     pub width: usize,
@@ -138,18 +139,23 @@ impl<T: Clone> HeightExpandableMap<T> {
     }
 }
 
+#[derive(Debug)]
 pub struct TileLayoutMesh<T> {
-    tiles: Vec<(Tile<T>, Position)>,
-    width: usize,
-    height: usize,
+    pub tiles: Vec<(Tile<T>, Position)>,
+    pub width: usize,
+    pub height: usize,
 }
 
 impl<T: Display> TileLayoutMesh<T> {
-    pub fn from_tiles(tiles: Vec<Tile<T>>, width: usize) -> Self {
+    pub fn from_tiles(tiles: Vec<Tile<T>>, width: usize) -> Result<Self, String> {
+        for tile in &tiles {
+            if tile.width > width {
+                return Err("the tile width is greater than the mesh width".to_string());
+            }
+        }
         let mut tiles = tiles;
         tiles.sort_by_key(|t| std::cmp::Reverse(t.size()));
-        let tiles_id_map = tiles.into_iter().enumerate().collect::<BTreeMap<_, _>>();
-
+        let mut tiles_id_map = tiles.into_iter().enumerate().collect::<BTreeMap<_, _>>();
         let mut map = HeightExpandableMap::<usize>::new(width, 0);
         let mut width_id_map = tiles_id_map.iter().fold(
             SortedContainer::<usize, usize>::new(),
@@ -158,10 +164,11 @@ impl<T: Display> TileLayoutMesh<T> {
                 acc
             },
         );
-
+        let mut result_map = BTreeMap::new();
         let mut y = 0;
         'outer: loop {
             for x in 0..width {
+                let p = Position::new(x, y);
                 if map.get(Position::new(x, y)).is_some() {
                     continue;
                 }
@@ -183,29 +190,41 @@ impl<T: Display> TileLayoutMesh<T> {
                 };
                 let tile = tiles_id_map.get(&tile_id).expect("impossible");
                 map.set_block(
-                    Position::new(x, y),
+                    p,
                     Position::new(x + tile.width - 1, y + tile.height - 1),
                     tile_id,
                 );
+                result_map.insert(tile_id, p);
             }
             y += 1;
         }
-        for y in 0..map.height() {
-            for x in 0..map.width() {
-                print!(
-                    "{}",
-                    map.get(Position::new(x, y))
-                        .map(|v| to_chinese_character_ordered(*v))
-                        .unwrap_or('　')
-                );
+        #[cfg(test)]
+        {
+            for y in 0..map.height() {
+                for x in 0..map.width() {
+                    print!(
+                        "{}",
+                        map.get(Position::new(x, y))
+                            .map(|v| to_chinese_character_ordered(*v))
+                            .unwrap_or('　')
+                    );
+                }
+                print!("\n");
             }
-            print!("\n");
         }
-
-        todo!()
+        let tiles = result_map
+            .into_iter()
+            .filter_map(|(id, p)| tiles_id_map.remove(&id).map(|v| (v, p)))
+            .collect::<Vec<_>>();
+        Ok(Self {
+            tiles,
+            width,
+            height: map.height(),
+        })
     }
 }
 
+#[cfg(test)]
 fn to_chinese_character_ordered(i: usize) -> char {
     #[rustfmt::skip]
     static CHARS: [char; 96] = [
@@ -247,8 +266,9 @@ mod tests {
         ]
         .into_iter()
         .enumerate()
-        .map(|(i, (w, h))| Tile::new((b'A' + i as u8) as char, w, h))
+        .map(|(i, (w, h))| Tile::new(to_chinese_character_ordered(i), w, h))
         .collect::<Vec<Tile<char>>>();
-        let _ = TileLayoutMesh::from_tiles(tiles, 12);
+        let mesh = TileLayoutMesh::from_tiles(tiles, 12).unwrap();
+        dbg!(mesh);
     }
 }
