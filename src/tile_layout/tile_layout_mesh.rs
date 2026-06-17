@@ -1,4 +1,4 @@
-use super::{HeightExpandableMap, Position, Tile};
+use super::{HeightExpandableMap, Position, Size, Tile};
 use std::{
     collections::{BTreeMap, VecDeque},
     fmt::Display,
@@ -46,8 +46,7 @@ impl<T, K: Ord + Clone> SortedContainer<T, K> {
 #[derive(Debug)]
 pub struct TileLayoutMesh<T> {
     pub tiles: Vec<(Tile<T>, Position)>,
-    pub width: usize,
-    pub height: usize,
+    pub size: Size,
 }
 
 impl<T: Display> TileLayoutMesh<T> {
@@ -60,7 +59,7 @@ impl<T: Display> TileLayoutMesh<T> {
         let mut tiles = tiles;
         tiles.sort_by_key(|t| std::cmp::Reverse(t.size.area()));
         let mut tiles_id_map = tiles.into_iter().enumerate().collect::<BTreeMap<_, _>>();
-        let mut map = HeightExpandableMap::<usize>::new(width, 0);
+        let mut map = HeightExpandableMap::<usize>::new(Size::new(width, 0));
         let mut width_id_map = tiles_id_map.iter().fold(
             SortedContainer::<usize, usize>::new(),
             |mut acc, (id, v)| {
@@ -110,15 +109,13 @@ impl<T: Display> TileLayoutMesh<T> {
             .collect::<Vec<_>>();
         Ok(Self {
             tiles,
-            width,
-            height: map.height(),
+            size: map.size(),
         })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::super::Size;
     use super::*;
     #[test]
     fn test() {

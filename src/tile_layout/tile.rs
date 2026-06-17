@@ -20,7 +20,7 @@ impl<T> Tile<T> {
 #[derive(Debug)]
 pub struct RawTile<T> {
     pub item: T,
-    // 长宽比例
+    // 原始比例
     pub size: Size,
     // 权重
     pub weight: u32,

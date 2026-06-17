@@ -1,44 +1,40 @@
-pub use super::Position;
+pub use super::{Position, Size};
 
 pub struct HeightExpandableMap<T: Clone> {
     map: Vec<Option<T>>,
-    width: usize,
-    height: usize,
+    size: Size,
 }
 
 impl<T: Clone> HeightExpandableMap<T> {
-    pub fn new(width: usize, height: usize) -> Self {
+    #[must_use]
+    pub fn new(size: Size) -> Self {
         Self {
-            map: vec![None; width * height],
-            width,
-            height,
+            map: vec![None; size.w * size.h],
+            size,
         }
     }
 
-    pub fn width(&self) -> usize {
-        self.width
-    }
-
-    pub fn height(&self) -> usize {
-        self.height
+    #[inline]
+    pub fn size(&self) -> Size {
+        self.size
     }
 
     fn resize(&mut self, height: usize) {
-        self.map.resize(self.width * height, None);
-        self.height = height;
+        self.map.resize(self.size.w * height, None);
+        self.size.h = height;
     }
 
     pub fn get(&self, p: Position) -> Option<&T> {
         self.map
-            .get(p.y * self.width + p.x)
+            .get(p.y * self.size.w + p.x)
             .and_then(|v| v.as_ref())
     }
 
     pub fn set(&mut self, p: Position, value: T) {
-        if p.y >= self.height {
+        if p.y >= self.size.h {
             self.resize(p.y + 1);
         }
-        self.map[p.y * self.width + p.x] = Some(value);
+        self.map[p.y * self.size.w + p.x] = Some(value);
     }
     pub fn set_block(&mut self, p1: Position, p2: Position, value: T) {
         for i in p1.y..=p2.y {
@@ -70,8 +66,8 @@ pub fn to_chinese_character_ordered(i: usize) -> char {
 #[cfg(test)]
 impl HeightExpandableMap<usize> {
     pub fn print(&self) {
-        for y in 0..self.height() {
-            for x in 0..self.width() {
+        for y in 0..self.size().h {
+            for x in 0..self.size().w {
                 print!(
                     "{}",
                     self.get(Position::new(x, y))
