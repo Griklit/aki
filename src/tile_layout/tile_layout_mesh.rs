@@ -53,18 +53,18 @@ pub struct TileLayoutMesh<T> {
 impl<T: Display> TileLayoutMesh<T> {
     pub fn from_tiles(tiles: Vec<Tile<T>>, width: usize) -> Result<Self, String> {
         for tile in &tiles {
-            if tile.width > width {
+            if tile.size.w > width {
                 return Err("the tile width is greater than the mesh width".to_string());
             }
         }
         let mut tiles = tiles;
-        tiles.sort_by_key(|t| std::cmp::Reverse(t.size()));
+        tiles.sort_by_key(|t| std::cmp::Reverse(t.size.area()));
         let mut tiles_id_map = tiles.into_iter().enumerate().collect::<BTreeMap<_, _>>();
         let mut map = HeightExpandableMap::<usize>::new(width, 0);
         let mut width_id_map = tiles_id_map.iter().fold(
             SortedContainer::<usize, usize>::new(),
             |mut acc, (id, v)| {
-                acc.insert(v.width, *id);
+                acc.insert(v.size.w, *id);
                 acc
             },
         );
@@ -95,7 +95,7 @@ impl<T: Display> TileLayoutMesh<T> {
                 let tile = tiles_id_map.get(&tile_id).expect("impossible");
                 map.set_block(
                     p,
-                    Position::new(x + tile.width - 1, y + tile.height - 1),
+                    Position::new(x + tile.size.w - 1, y + tile.size.h - 1),
                     tile_id,
                 );
                 result_map.insert(tile_id, p);
@@ -118,6 +118,7 @@ impl<T: Display> TileLayoutMesh<T> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::Size;
     use super::*;
     #[test]
     fn test() {
@@ -141,11 +142,10 @@ mod tests {
             (1, 1),
             (1, 1),
             (1, 1),
-            (1, 1),
         ]
         .into_iter()
         .enumerate()
-        .map(|(i, (w, h))| Tile::new(i, w, h))
+        .map(|(i, (w, h))| Tile::new(i, Size::new(w, h)))
         .collect::<Vec<Tile<usize>>>();
         let mesh = TileLayoutMesh::from_tiles(tiles, 12).unwrap();
         dbg!(mesh);
