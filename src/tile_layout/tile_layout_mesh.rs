@@ -2,7 +2,6 @@ use std::{
     collections::{BTreeMap, HashMap, VecDeque},
     fmt::Display,
     hash::Hash,
-    sync::Arc,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -33,6 +32,10 @@ impl<T> Tile<T> {
             height,
         }
     }
+
+    pub fn size(&self) -> usize {
+        self.width * self.height
+    }
 }
 
 pub struct HeightExpandableMap<T: Clone> {
@@ -43,7 +46,7 @@ pub struct HeightExpandableMap<T: Clone> {
 
 pub enum PopLesserOption<T> {
     Some(T),
-    NoThanLess,
+    NoLesser,
     Empty,
 }
 
@@ -68,7 +71,7 @@ impl<T, K: Ord + Clone> SortedContainer<T, K> {
         }
         let (key, item, flag) = {
             let Some((k, items)) = self.data.range_mut(..=key).next_back() else {
-                return PopLesserOption::NoThanLess;
+                return PopLesserOption::NoLesser;
             };
             let item = items.pop_front().expect("impossible");
             (k.clone(), item, items.is_empty())
@@ -143,14 +146,18 @@ pub struct TileLayoutMesh<T> {
 
 impl<T: Display> TileLayoutMesh<T> {
     pub fn from_tiles(tiles: Vec<Tile<T>>, width: usize) -> Self {
-        let mut map = HeightExpandableMap::<&Tile<T>>::new(width, 0);
-        let mut widhth_map =
-            tiles
-                .iter()
-                .fold(SortedContainer::<&Tile<T>, usize>::new(), |mut acc, v| {
-                    acc.insert(v.width, v);
-                    acc
-                });
+        let mut tiles = tiles;
+        tiles.sort_by_key(|t| std::cmp::Reverse(t.size()));
+        let tiles_id_map = tiles.into_iter().enumerate().collect::<BTreeMap<_, _>>();
+
+        let mut map = HeightExpandableMap::<usize>::new(width, 0);
+        let mut width_id_map = tiles_id_map.iter().fold(
+            SortedContainer::<usize, usize>::new(),
+            |mut acc, (id, v)| {
+                acc.insert(v.width, *id);
+                acc
+            },
+        );
 
         let mut y = 0;
         'outer: loop {
@@ -165,19 +172,20 @@ impl<T: Display> TileLayoutMesh<T> {
                     }
                     space += 1;
                 }
-                let tile = match widhth_map.pop_lesser(space) {
+                let tile_id = match width_id_map.pop_lesser(space) {
                     PopLesserOption::Some(tile) => tile,
                     PopLesserOption::Empty => {
                         break 'outer;
                     }
-                    PopLesserOption::NoThanLess => {
+                    PopLesserOption::NoLesser => {
                         continue;
                     }
                 };
+                let tile = tiles_id_map.get(&tile_id).expect("impossible");
                 map.set_block(
                     Position::new(x, y),
                     Position::new(x + tile.width - 1, y + tile.height - 1),
-                    tile,
+                    tile_id,
                 );
             }
             y += 1;
@@ -185,10 +193,10 @@ impl<T: Display> TileLayoutMesh<T> {
         for y in 0..map.height() {
             for x in 0..map.width() {
                 print!(
-                    "{} ",
+                    "{}",
                     map.get(Position::new(x, y))
-                        .map(|x| x.item.to_string())
-                        .unwrap_or("-".to_string())
+                        .map(|v| to_chinese_character_ordered(*v))
+                        .unwrap_or('　')
                 );
             }
             print!("\n");
@@ -196,6 +204,23 @@ impl<T: Display> TileLayoutMesh<T> {
 
         todo!()
     }
+}
+
+fn to_chinese_character_ordered(i: usize) -> char {
+    #[rustfmt::skip]
+    static CHARS: [char; 96] = [
+        '甲', '乙', '丙', '丁', '戊', '己', '庚', '辛', '壬', '癸',
+        '子', '丑', '寅', '卯', '辰', '巳', '午', '未', '申', '酉', '戌', '亥',
+        '一', '二', '三', '四', '五', '六', '七', '八', '九', '十',
+        '壹', '贰', '叁', '肆', '伍', '陆', '柒', '捌', '玖', '拾',
+        '天', '地', '玄', '黄', '宇', '宙', '洪', '荒',
+        '乾', '兑', '离', '震', '巽', '坎', '艮', '坤',
+        '金', '木', '水', '火', '土',
+        '角', '亢', '氐', '房', '心', '尾', '箕', '斗', '牛', '女', '虚',
+        '危', '室', '壁', '奎', '娄', '胃', '昴', '毕', '觜', '参', '井',
+        '鬼', '柳', '星', '张', '翼', '轸', '宫', '商', '角', '徵', '羽',
+    ];
+    CHARS[i]
 }
 
 #[cfg(test)]
@@ -224,6 +249,6 @@ mod tests {
         .enumerate()
         .map(|(i, (w, h))| Tile::new((b'A' + i as u8) as char, w, h))
         .collect::<Vec<Tile<char>>>();
-        let mesh = TileLayoutMesh::from_tiles(tiles, 12);
+        let _ = TileLayoutMesh::from_tiles(tiles, 12);
     }
 }
