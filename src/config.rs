@@ -4,6 +4,7 @@ use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
+use std::sync::OnceLock;
 
 pub static CONFIG: LazyLock<Config> = LazyLock::new(|| {
     #[cfg(debug_assertions)]
@@ -75,21 +76,24 @@ impl Config {
         Self::load(&path)
     }
 
-    pub fn anime_data_path(&self) -> PathBuf {
-        let path = self.root.join(&self.anime.path);
-        utils::path::normalize(path)
+    pub fn anime_data_path(&self) -> &'static Path {
+        static PATH: OnceLock<PathBuf> = OnceLock::new();
+        PATH.get_or_init(|| utils::path::normalize(self.root.join(&self.anime.path)))
     }
 
-    pub fn anime_tantivy_index_path(&self) -> PathBuf {
-        self.anime_data_path().join(".aki/tantivy-index")
+    pub fn anime_tantivy_index_path(&self) -> &'static Path {
+        static PATH: OnceLock<PathBuf> = OnceLock::new();
+        PATH.get_or_init(|| self.anime_data_path().join(".aki/tantivy-index"))
     }
 
-    pub fn anime_fjall_index_path(&self) -> PathBuf {
-        self.anime_data_path().join(".aki/fjall-index")
+    pub fn anime_fjall_index_path(&self) -> &'static Path {
+        static PATH: OnceLock<PathBuf> = OnceLock::new();
+        PATH.get_or_init(|| self.anime_data_path().join(".aki/fjall-index"))
     }
 
-    pub fn bangumi_subject_path(&self) -> PathBuf {
-        self.root.join("bangumi/subject")
+    pub fn bangumi_subject_path(&self) -> &'static Path {
+        static PATH: OnceLock<PathBuf> = OnceLock::new();
+        PATH.get_or_init(|| self.root.join("bangumi/subject"))
     }
 }
 
