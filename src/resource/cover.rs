@@ -12,9 +12,15 @@ pub struct Cover {
 }
 
 impl Resource for Cover {
+    type GetResourceError = std::io::Error;
+
     #[inline]
     fn kind() -> &'static str {
         "cover"
+    }
+
+    fn get(&self) -> Result<Vec<u8>, std::io::Error> {
+        self.image_type.get(&self.path)
     }
 }
 

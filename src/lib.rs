@@ -19,4 +19,4 @@ pub use bangumi::{Subject as BangumiSubject, SubjectType as BangumiSubjectType};
 pub use common::{Language, Score};
 pub use config::CONFIG;
 pub use meta::{Meta, MetaData, MetaId, Namespace};
-pub use resource::{ImageType, Resource, resource_type};
+pub use resource::{ImageType, Resource, cover};
