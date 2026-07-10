@@ -20,7 +20,7 @@ impl Resource for Cover {
     }
 
     fn get(&self) -> Result<Vec<u8>, std::io::Error> {
-        self.image_type.get(&self.path)
+        self.load()
     }
 }
 
