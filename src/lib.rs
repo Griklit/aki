@@ -6,7 +6,7 @@ mod bangumi;
 mod common;
 mod config;
 mod meta;
-mod resource;
+// mod resource;
 pub mod tile_layout;
 pub mod utils;
 
@@ -19,4 +19,4 @@ pub use bangumi::{Subject as BangumiSubject, SubjectType as BangumiSubjectType};
 pub use common::{Language, Score};
 pub use config::CONFIG;
 pub use meta::{Meta, MetaData, MetaId, Namespace};
-pub use resource::{ImageType, Resource, cover};
+// pub use resource::{ImageType, Resource, cover};

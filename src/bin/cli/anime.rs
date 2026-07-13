@@ -21,6 +21,7 @@ pub struct Search {
 
 #[derive(Subcommand)]
 pub enum AnimeSubCommands {
+    /// Add an anime entry with a Bangumi ID.
     AddWithBangumi(AddWithBangumi),
     /// Build a full-text search index for all anime entries.
     /// The index is stored at {anime_data_path}/.aki/tantivy-index/
@@ -28,6 +29,8 @@ pub enum AnimeSubCommands {
     /// Full-text search across anime titles and summaries.
     /// Requires an index to be built first with `build-index`.
     Search(Search),
+    /// Verify the structural correctness of the anime data file.
+    Verify,
 }
 
 impl AnimeSubCommands {
@@ -53,6 +56,14 @@ impl AnimeSubCommands {
                         .collect::<Vec<_>>()
                         .join("\n"),
                 ))
+            }
+            Self::Verify => {
+                let (count, errors) = anime_command::verify()?;
+                let mut ret = format!("verified {} anime files, {} errors", count, errors.len());
+                for error in errors {
+                    ret += format!("\n[{}] {}", error.path.to_string_lossy(), error.error).as_str()
+                }
+                Ok(Some(ret))
             }
         }
     }
