@@ -91,7 +91,9 @@ impl<T: Display> TileLayoutMesh<T> {
                         continue;
                     }
                 };
-                let tile = tiles_id_map.get(&tile_id).expect("impossible");
+                let tile = tiles_id_map
+                    .get(&tile_id)
+                    .ok_or_else(|| "impossible".to_string())?;
                 map.set_block(
                     p,
                     Position::new(x + tile.size.w - 1, y + tile.size.h - 1),

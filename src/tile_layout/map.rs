@@ -15,6 +15,7 @@ impl<T: Clone> HeightExpandableMap<T> {
     }
 
     #[inline]
+    #[must_use]
     pub fn size(&self) -> Size {
         self.size
     }
@@ -24,6 +25,7 @@ impl<T: Clone> HeightExpandableMap<T> {
         self.size.h = height;
     }
 
+    #[must_use]
     pub fn get(&self, p: Position) -> Option<&T> {
         self.map
             .get(p.y * self.size.w + p.x)

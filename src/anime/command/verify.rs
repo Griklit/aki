@@ -18,13 +18,11 @@ pub struct InvaildAnimeFile {
 
 pub fn verify() -> Result<(usize, Vec<InvaildAnimeFile>), io::Error> {
     let mut errors = Vec::new();
-    let file_iter = fs::read_dir(CONFIG.anime_data_path())?
-        .into_iter()
-        .flatten();
+    let file_iter = fs::read_dir(CONFIG.anime_data_path())?.flatten();
     let mut count = 0;
     for entry in file_iter {
         let path = entry.path();
-        if !path.extension().is_some_and(|ext| ext == "json") {
+        if path.extension().is_none_or(|ext| ext.eq("json")) {
             continue;
         }
         count += 1;
@@ -34,7 +32,6 @@ pub fn verify() -> Result<(usize, Vec<InvaildAnimeFile>), io::Error> {
                 path,
                 error: e.into(),
             });
-            continue;
         }
     }
     Ok((count, errors))

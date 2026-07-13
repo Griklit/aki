@@ -27,15 +27,20 @@ impl<T> Tile<T> {
         Self { item, size }
     }
 
-    /// 将原始瓦片根据网格尺寸尽可能转换为目标瓦片，不保证 target_area 一定等于 w * h
+    /// 将原始瓦片根据网格尺寸尽可能转换为目标瓦片，不保证 `target_area` 一定等于 w * h
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_precision_loss
+    )]
     pub fn from_raw(raw: RawTile<T>, grid_size: Size, target_area: f64) -> Self {
         // 只关心比例，不关心原始尺寸，故而此处不进行归一化
-        let raw_h_grided = raw.size.h as f64 / grid_size.h as f64;
-        let raw_w_grided = raw.size.w as f64 / grid_size.w as f64;
-        let ratio_grided = raw_w_grided / raw_h_grided;
+        let raw_height_grided = raw.size.h as f64 / grid_size.h as f64;
+        let raw_width_grided = raw.size.w as f64 / grid_size.w as f64;
+        let ratio_grided = raw_width_grided / raw_height_grided;
         let w = ((target_area * ratio_grided).sqrt()).round().max(1.0);
         let h = ((target_area / ratio_grided).sqrt()).round().max(1.0);
-        Self::new(raw.item, Size::new(w as usize, h as usize))
+        Self::new(raw.item, Size::new(w.floor() as usize, h.floor() as usize))
     }
 }
 

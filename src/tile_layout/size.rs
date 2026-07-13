@@ -12,6 +12,7 @@ impl Size {
     }
 
     #[inline]
+    #[must_use]
     pub fn area(&self) -> usize {
         self.w * self.h
     }

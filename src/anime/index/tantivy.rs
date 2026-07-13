@@ -127,10 +127,10 @@ pub fn build_tantivy_index(context: &AnimeContext) -> Result<usize, BuildTantivy
     let schema = context.tantivy_schema();
     let index_dir = CONFIG.anime_tantivy_index_path();
     if index_dir.exists() {
-        std::fs::remove_dir_all(&index_dir).map_err(BuildTantivyIndexError::RemoveOldIndexDir)?;
+        std::fs::remove_dir_all(index_dir).map_err(BuildTantivyIndexError::RemoveOldIndexDir)?;
     }
-    std::fs::create_dir_all(&index_dir).map_err(BuildTantivyIndexError::CreateIndexDir)?;
-    let index = Index::create_in_dir(&index_dir, schema.schema.clone())
+    std::fs::create_dir_all(index_dir).map_err(BuildTantivyIndexError::CreateIndexDir)?;
+    let index = Index::create_in_dir(index_dir, schema.schema.clone())
         .map_err(BuildTantivyIndexError::CreateIndex)?;
     index
         .tokenizers()
@@ -187,11 +187,11 @@ pub fn get_tantivy_index() -> Result<Index, GetTantivyIndexError> {
     type E = GetTantivyIndexError;
     let index_dir = CONFIG.anime_tantivy_index_path();
     let index = if index_dir.exists() {
-        Index::open_in_dir(&index_dir).map_err(E::Open)?
+        Index::open_in_dir(index_dir).map_err(E::Open)?
     } else {
-        std::fs::create_dir_all(&index_dir).map_err(E::CreateIndexDir)?;
+        std::fs::create_dir_all(index_dir).map_err(E::CreateIndexDir)?;
         let schema = AnimeTantivyIndexSchema::new().schema;
-        Index::create_in_dir(&index_dir, schema).map_err(E::CreateIndex)?
+        Index::create_in_dir(index_dir, schema).map_err(E::CreateIndex)?
     };
     index
         .tokenizers()
