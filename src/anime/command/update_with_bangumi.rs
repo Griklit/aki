@@ -1,7 +1,8 @@
 use std::io;
 use std::path::PathBuf;
 
-use super::super::{Anime, SaveAnimeError};
+use super::super::{Anime, SaveAnimeError, index::BangumiIdIndex};
+use crate::MetaId;
 use crate::bangumi::Subject;
 
 #[derive(Debug, thiserror::Error)]
@@ -26,8 +27,9 @@ pub async fn update_with_bangumi(
     client: &reqwest::Client,
     bangumi_id: i64,
 ) -> Result<Anime, UpdateWithBangumiError> {
+    let mut index = BangumiIdIndex::load();
     // 先确认要更新的条目存在且唯一，避免为一次注定失败的调用写入 Bangumi 数据。
-    let (mut anime, outdated_path) = find_exclusive_anime(bangumi_id)?;
+    let (mut anime, outdated_path) = find_exclusive_anime(&mut index, bangumi_id)?;
 
     let subject = Subject::request_with_id(client, bangumi_id)
         .await
@@ -39,15 +41,15 @@ pub async fn update_with_bangumi(
     refresh_with_subject(&mut anime, subject);
     let path = anime.meta.id.json_data_path();
 
-    if path != outdated_path {
-        // 不覆盖其他条目：同日同名的番剧会算出同一个 `meta.id`。
-        if path.exists() {
-            return Err(UpdateWithBangumiError::TargetExists(path));
-        }
+    // 不覆盖其他条目：同日同名的番剧会算出同一个 `meta.id`。
+    if path != outdated_path && path.exists() {
+        return Err(UpdateWithBangumiError::TargetExists(path));
     }
     anime
         .save_as_meta_id_force()
         .map_err(UpdateWithBangumiError::SaveAnime)?;
+    // `meta.id` 可能已按最新数据重算：先把索引指向新文件，再删除旧文件。
+    index.set(bangumi_id, &anime.meta.id.id);
     if path != outdated_path {
         std::fs::remove_file(&outdated_path).map_err(UpdateWithBangumiError::RemoveOutdatedFile)?;
     }
@@ -55,17 +57,41 @@ pub async fn update_with_bangumi(
 }
 
 /// 找出 `bangumi_id` 唯一对应的番剧，并返回它当前的数据文件路径。
-fn find_exclusive_anime(bangumi_id: i64) -> Result<(Anime, PathBuf), UpdateWithBangumiError> {
+///
+/// 先查 `.aki` 下的 bangumi-id 索引；索引缺失或已失效（文件被改名、删除）时
+/// 回退到遍历数据目录，并把找到的映射写回索引。
+fn find_exclusive_anime(
+    index: &mut BangumiIdIndex,
+    bangumi_id: i64,
+) -> Result<(Anime, PathBuf), UpdateWithBangumiError> {
+    if let Some(anime) = index
+        .get(bangumi_id)
+        .and_then(|meta_id| load_indexed(bangumi_id, meta_id))
+    {
+        let path = anime.meta.id.json_data_path();
+        return Ok((anime, path));
+    }
+
     let mut animes = Anime::iter_all().filter(|anime| anime.bangumi_id == Some(bangumi_id));
     let Some(anime) = animes.next() else {
         return Err(UpdateWithBangumiError::NotFound(bangumi_id));
     };
     let duplicated = animes.count();
     if duplicated > 0 {
-        return Err(UpdateWithBangumiError::Ambiguous(bangumi_id, duplicated + 1));
+        return Err(UpdateWithBangumiError::Ambiguous(
+            bangumi_id,
+            duplicated + 1,
+        ));
     }
+    index.set(bangumi_id, &anime.meta.id.id);
     let path = anime.meta.id.json_data_path();
     Ok((anime, path))
+}
+
+/// 按索引里的 `meta_id` 读取番剧，并确认它确实属于该 `bangumi_id`。
+fn load_indexed(bangumi_id: i64, meta_id: &str) -> Option<Anime> {
+    let anime = Anime::load_with_meta_id(&MetaId::with_id(meta_id.to_string())).ok()?;
+    (anime.bangumi_id == Some(bangumi_id)).then_some(anime)
 }
 
 /// 用 Bangumi 的最新条目刷新 `anime` 中由 Bangumi 提供的部分。
@@ -78,7 +104,9 @@ fn refresh_with_subject(anime: &mut Anime, subject: Subject) {
     anime.meta.id = fresh.meta.id;
     anime.meta.data.title = fresh.meta.data.title;
     anime.info = fresh.info;
-    anime.internationalizations.extend(fresh.internationalizations);
+    anime
+        .internationalizations
+        .extend(fresh.internationalizations);
     anime.bangumi_id = fresh.bangumi_id;
 }
 
@@ -97,7 +125,10 @@ mod tests {
         let mut state = AnimeState::default();
         state.watching();
         Anime::new(
-            Meta::with_id("[1999-01-01] 旧标题".to_string(), Some("旧标题".to_string())),
+            Meta::with_id(
+                "[1999-01-01] 旧标题".to_string(),
+                Some("旧标题".to_string()),
+            ),
             AnimeInfo {
                 title: "旧标题".to_string(),
                 summary: Some("旧简介".to_string()),
@@ -133,8 +164,14 @@ mod tests {
             anime.info.summary.as_deref(),
             Some(subject.summary.as_str())
         );
-        assert_eq!(anime.info.platform.as_deref(), Some(subject.platform.as_str()));
-        assert_eq!(anime.meta.data.title.as_deref(), Some(subject.name_cn.as_str()));
+        assert_eq!(
+            anime.info.platform.as_deref(),
+            Some(subject.platform.as_str())
+        );
+        assert_eq!(
+            anime.meta.data.title.as_deref(),
+            Some(subject.name_cn.as_str())
+        );
         assert_eq!(anime.bangumi_id, Some(subject.id));
         // meta.id 按最新数据重算，不再沿用旧标题。
         assert_eq!(

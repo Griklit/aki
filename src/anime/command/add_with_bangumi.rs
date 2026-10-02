@@ -1,6 +1,6 @@
 use std::io;
 
-use super::super::{Anime, SaveAnimeError};
+use super::super::{Anime, SaveAnimeError, index::BangumiIdIndex};
 use crate::bangumi::Subject;
 
 #[derive(Debug, thiserror::Error)]
@@ -27,5 +27,8 @@ pub async fn add_with_bangumi(
     anime
         .save_as_meta_id()
         .map_err(AddWithBangumiError::SaveAnime)?;
+    // 记入 bangumi-id 索引，让 update-with-bangumi 可以直接定位这条番剧。
+    let mut index = BangumiIdIndex::load();
+    index.set(bangumi_id, &anime.meta.id.id);
     Ok(anime)
 }

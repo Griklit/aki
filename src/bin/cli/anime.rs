@@ -33,8 +33,9 @@ pub enum AnimeSubCommands {
     /// filled in yourself is left untouched. The data file is renamed when the
     /// Bangumi title or air date changed, so run `build-index` afterwards.
     UpdateWithBangumi(UpdateWithBangumi),
-    /// Build a full-text search index for all anime entries.
-    /// The index is stored at {anime_data_path}/.aki/tantivy-index/
+    /// Build the indexes for all anime entries: the full-text search index
+    /// ({anime_data_path}/.aki/tantivy-index/) and the bangumi-id index
+    /// ({anime_data_path}/.aki/bangumi-id-index.json).
     BuildIndex(BuildIndex),
     /// Full-text search across anime titles and summaries.
     /// Requires an index to be built first with `build-index`.
@@ -61,8 +62,11 @@ impl AnimeSubCommands {
                 Ok(Some(anime.to_string()))
             }
             Self::BuildIndex(_) => {
-                let count = anime_command::build_index()?;
-                Ok(Some(format!("indexed animes: {}", count)))
+                let result = anime_command::build_index()?;
+                Ok(Some(format!(
+                    "indexed animes: {}, bangumi ids: {}",
+                    result.animes, result.bangumi_ids
+                )))
             }
             Self::Search(args) => {
                 let animes = anime_command::search(&args.query, args.limit)?;

@@ -95,6 +95,18 @@ aki/
 3. 解析 TOML，设置 `root` 和 `locale`
 4. 通过 `anime_data_path()` 获取番剧 JSON 文件的存储路径
 
+### 路径方法
+
+`Config` 集中提供各数据路径，均用 `OnceLock` 缓存：
+
+| 方法 | 路径 |
+|------|------|
+| `anime_data_path()` | `{root}/{anime.path}` |
+| `anime_tantivy_index_path()` | `{anime_data_path}/.aki/tantivy-index` |
+| `anime_fjall_index_path()` | `{anime_data_path}/.aki/fjall-index`（预留，未使用） |
+| `anime_bangumi_id_index_path()` | `{anime_data_path}/.aki/bangumi-id-index.json` |
+| `bangumi_subject_path()` | `{root}/bangumi/subject` |
+
 ### 配置文件格式 (`database/aki.toml`)
 
 ```toml
@@ -247,10 +259,10 @@ pub async fn update_with_bangumi(client: &reqwest::Client, bangumi_id: i64)
 ```
 
 流程：
-1. 用 `Anime::iter_all()` 找出 `bangumi_id` 匹配的番剧：一条都没有报 `NotFound`，多于一条报 `Ambiguous`（先查再联网，失败时不会写入任何数据）
+1. 载入 `.aki/bangumi-id-index.json` 索引，按 `bangumi_id` 直接定位番剧；索引未命中或索引项已失效（文件被改名、删除）时回退到遍历数据目录，并把结果写回索引：一条都没有报 `NotFound`，多于一条报 `Ambiguous`（先查再联网，失败时不会写入任何数据）
 2. 调用 Bangumi API 获取条目数据并保存
 3. 用最新条目刷新该番剧
-4. 写入数据文件；若 `meta.id` 变化导致改名，写入新文件后再删除旧文件，新文件名已被其他条目占用时报 `TargetExists`（不覆盖）
+4. 写入数据文件并同步索引；若 `meta.id` 变化导致改名，先把索引指向新文件，再删除旧文件，新文件名已被其他条目占用时报 `TargetExists`（不覆盖）
 
 刷新规则：
 
@@ -264,6 +276,48 @@ pub async fn update_with_bangumi(client: &reqwest::Client, bangumi_id: i64)
 | `state` | 用户填写，原样保留 |
 
 > `meta.id` 同时是搜索索引的键，改名后需要重新执行 `aki-cli anime build-index`，否则 `search` 会加载不到旧文件。
+
+### 3.8 索引 (`src/anime/index/`)
+
+**目录**: [src/anime/index/](src/anime/index/)
+
+索引都放在番剧数据目录的 `.aki/` 子目录下，随时可以删除并从数据目录重建。
+
+#### bangumi-id 索引 (`src/anime/index/bangumi_id.rs`)
+
+**文件**: [src/anime/index/bangumi_id.rs](src/anime/index/bangumi_id.rs)
+
+**功能**: `bangumi_id` → `Anime::meta.id` 的简单 JSON 索引，让 `update-with-bangumi` 免遍历地定位番剧。
+
+- 位置: `{anime_data_path}/.aki/bangumi-id-index.json`（见 `Config::anime_bangumi_id_index_path()`）
+- 格式: `{ "<bangumi_id>": "<meta id>", ... }`
+
+```rust
+pub struct BangumiIdIndex { /* path, entries: BTreeMap<i64, String> */ }
+
+impl BangumiIdIndex {
+    pub fn load() -> Self;                                // 从 CONFIG 路径载入
+    pub fn load_at(path: impl Into<PathBuf>) -> Self;     // 从指定路径载入
+    pub fn get(&self, bangumi_id: i64) -> Option<&str>;
+    pub fn set(&mut self, bangumi_id: i64, meta_id: &str); // 写入并立即落盘
+}
+```
+
+**写入时机**：`add-with-bangumi` 保存新番剧后、`update-with-bangumi` 遍历找到番剧后，以及更新导致 `meta.id` 重算后。
+
+**重建**：`build_bangumi_id_index()` 遍历数据目录，用结果整体覆盖索引文件并返回映射数量（已删除的番剧不会残留在索引里）；`aki-cli anime build-index` 会先重建它，再重建全文索引。
+
+**读取方式**：命中的索引项仍要能读到对应文件、且其 `bangumi_id` 与查询一致才算有效，否则回退到遍历并修复索引。
+
+**容错**：这是可重建的缓存，文件不存在按空索引处理，文件损坏时打印警告并按空索引处理，读写失败只打印警告——都不会让真正的增删改失败，下一次成功的写入会自动修复。
+
+#### tantivy 全文搜索索引 (`src/anime/index/tantivy.rs`)
+
+**文件**: [src/anime/index/tantivy.rs](src/anime/index/tantivy.rs)
+
+**功能**: 按语言分词的标题/摘要全文搜索索引，位于 `{anime_data_path}/.aki/tantivy-index/`，由 `aki-cli anime build-index` 全量重建。文档以 `meta.id` 为键，因此数据文件改名后（例如 `update-with-bangumi` 重算了 `meta.id`）必须重新执行 `build-index`（该命令会同时重建上面的 bangumi-id 索引）。
+
+> [src/anime/index/fjall.rs](src/anime/index/fjall.rs) 是为 fjall 键值索引预留的未完成实现，当前未编入模块树（`index/mod.rs` 中仍是注释状态）。
 
 ---
 
@@ -485,7 +539,7 @@ aki-cli
 
 **文件**:
 - [mod.rs](src/bin/cli/mod.rs) — CLI 入口，定义 `SubCommands::Anime` 子命令
-- [anime.rs](src/bin/cli/anime.rs) — Anime 子命令，`AddWithBangumi` / `UpdateWithBangumi` 接收 Bangumi ID，创建 tokio runtime 调用对应的异步函数，成功后打印番剧标题
+- [anime.rs](src/bin/cli/anime.rs) — Anime 子命令，`AddWithBangumi` / `UpdateWithBangumi` 接收 Bangumi ID，创建 tokio runtime 调用对应的异步函数，成功后打印番剧标题；`BuildIndex` 重建全文索引与 bangumi-id 索引并打印两者数量
 
 **使用示例**:
 ```bash

@@ -91,6 +91,11 @@ impl Config {
         PATH.get_or_init(|| self.anime_data_path().join(".aki/fjall-index"))
     }
 
+    pub fn anime_bangumi_id_index_path(&self) -> &'static Path {
+        static PATH: OnceLock<PathBuf> = OnceLock::new();
+        PATH.get_or_init(|| self.anime_data_path().join(".aki/bangumi-id-index.json"))
+    }
+
     pub fn bangumi_subject_path(&self) -> &'static Path {
         static PATH: OnceLock<PathBuf> = OnceLock::new();
         PATH.get_or_init(|| self.root.join("bangumi/subject"))
