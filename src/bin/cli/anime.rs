@@ -8,6 +8,11 @@ pub struct AddWithBangumi {
 }
 
 #[derive(Args)]
+pub struct UpdateWithBangumi {
+    bangumi_id: i64,
+}
+
+#[derive(Args)]
 pub struct BuildIndex;
 
 #[derive(Args)]
@@ -23,6 +28,11 @@ pub struct Search {
 pub enum AnimeSubCommands {
     /// Add an anime entry with a Bangumi ID.
     AddWithBangumi(AddWithBangumi),
+    /// Re-fetch an existing anime entry from Bangumi and refresh its data.
+    /// Bangumi-provided fields (info, i18n) are overwritten; the `state` you
+    /// filled in yourself is left untouched. The data file is renamed when the
+    /// Bangumi title or air date changed, so run `build-index` afterwards.
+    UpdateWithBangumi(UpdateWithBangumi),
     /// Build a full-text search index for all anime entries.
     /// The index is stored at {anime_data_path}/.aki/tantivy-index/
     BuildIndex(BuildIndex),
@@ -41,6 +51,13 @@ impl AnimeSubCommands {
                 let client = reqwest::Client::new();
                 let anime =
                     runtime.block_on(anime_command::add_with_bangumi(&client, args.bangumi_id))?;
+                Ok(Some(anime.to_string()))
+            }
+            Self::UpdateWithBangumi(args) => {
+                let runtime = tokio::runtime::Runtime::new()?;
+                let client = reqwest::Client::new();
+                let anime = runtime
+                    .block_on(anime_command::update_with_bangumi(&client, args.bangumi_id))?;
                 Ok(Some(anime.to_string()))
             }
             Self::BuildIndex(_) => {

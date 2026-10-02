@@ -235,6 +235,36 @@ pub async fn add_with_bangumi(client: &reqwest::Client, bangumi_id: i64)
 2. 将 `BangumiSubject` 转换为 `Anime`
 3. 保存为 JSON 文件
 
+### 3.7 命令：update_with_bangumi (`src/anime/command/`)
+
+**文件**: [src/anime/command/update_with_bangumi.rs](src/anime/command/update_with_bangumi.rs)
+
+**功能**: 按 Bangumi ID 找到已有番剧，重新拉取条目数据并刷新其中的 Bangumi 数据。
+
+```rust
+pub async fn update_with_bangumi(client: &reqwest::Client, bangumi_id: i64)
+    -> Result<Anime, UpdateWithBangumiError>
+```
+
+流程：
+1. 用 `Anime::iter_all()` 找出 `bangumi_id` 匹配的番剧：一条都没有报 `NotFound`，多于一条报 `Ambiguous`（先查再联网，失败时不会写入任何数据）
+2. 调用 Bangumi API 获取条目数据并保存
+3. 用最新条目刷新该番剧
+4. 写入数据文件；若 `meta.id` 变化导致改名，写入新文件后再删除旧文件，新文件名已被其他条目占用时报 `TargetExists`（不覆盖）
+
+刷新规则：
+
+| 字段 | 处理 |
+|------|------|
+| `info` | 整体替换为 Bangumi 最新数据 |
+| `i18n` | 按语言合并：Bangumi 能提供的语言整体覆盖，其余语言保留 |
+| `meta.id` | 按最新「[上映日期] 原名」重算，数据文件名随之改变 |
+| `meta.data.title` | 刷新为最新 `name_cn` |
+| `meta.data.create_time` | 保留原值 |
+| `state` | 用户填写，原样保留 |
+
+> `meta.id` 同时是搜索索引的键，改名后需要重新执行 `aki-cli anime build-index`，否则 `search` 会加载不到旧文件。
+
 ---
 
 ## 四、Bangumi API 集成 (`src/bangumi/`)
@@ -446,18 +476,24 @@ pub fn normalize(path: impl AsRef<Path>) -> PathBuf
 ```
 aki-cli
 └── anime (alias: a)
-    └── add-with-bangumi <bangumi_id>
+    ├── add-with-bangumi <bangumi_id>
+    ├── update-with-bangumi <bangumi_id>
+    ├── build-index
+    ├── search <query> [-l <limit>]
+    └── verify
 ```
 
 **文件**:
 - [mod.rs](src/bin/cli/mod.rs) — CLI 入口，定义 `SubCommands::Anime` 子命令
-- [anime.rs](src/bin/cli/anime.rs) — Anime 子命令，`AddWithBangumi` 接收 Bangumi ID，创建 tokio runtime 调用 `add_with_bangumi` 异步函数，成功后打印番剧标题
+- [anime.rs](src/bin/cli/anime.rs) — Anime 子命令，`AddWithBangumi` / `UpdateWithBangumi` 接收 Bangumi ID，创建 tokio runtime 调用对应的异步函数，成功后打印番剧标题
 
 **使用示例**:
 ```bash
 aki-cli anime add-with-bangumi 475354
+aki-cli anime update-with-bangumi 475354
 # 或
 aki-cli a add-with-bangumi 475354
+aki-cli a update-with-bangumi 475354
 ```
 
 ### 9.2 scripts — 数据迁移脚本 (`src/bin/scripts/`)
