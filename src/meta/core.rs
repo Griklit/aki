@@ -1,8 +1,6 @@
 use super::Namespace;
 use super::namespace::{deserialize_namespace, serialize_namespace};
-use crate::CONFIG;
 use chrono::{DateTime, Utc};
-use sanitize_filename::sanitize;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -33,15 +31,18 @@ impl<T: Namespace> MetaId<T> {
         }
     }
 
+    /// 文件名（含扩展名），由 `id` 经文件名安全化得到。
+    #[must_use]
     pub fn json_filename(&self) -> String {
-        format!("{}.json", sanitize(&self.id))
+        T::json_path(&self.id)
+            .file_name()
+            .map_or_else(|| String::from("unnamed.json"), |v| v.to_string_lossy().into())
     }
 
+    /// 数据文件路径，目录与命名规则均由命名空间 `T` 决定。
+    #[must_use]
     pub fn json_data_path(&self) -> PathBuf {
-        CONFIG
-            .anime_data_path()
-            .join(sanitize(&self.id))
-            .with_extension("json")
+        T::json_path(&self.id)
     }
 }
 

@@ -2,10 +2,10 @@
 
 ## 项目概述
 
-`aki` 是一个用 Rust 编写的个人追番管理工具。核心功能是：
-- 以 JSON 文件存储番剧数据（元信息、观看状态、评分）
-- 从 [Bangumi](https://bgm.tv) 拉取番剧元数据
-- 通过 CLI 命令行交互管理番剧列表
+`aki` 是一个用 Rust 编写的个人追番/追游戏管理工具。核心功能是：
+- 以 JSON 文件存储番剧与游戏数据（元信息、观看/游玩状态、评分）
+- 从 [Bangumi](https://bgm.tv) 拉取番剧元数据，从 [Steam](https://store.steampowered.com) 拉取游戏元数据
+- 通过 CLI 命令行交互管理列表
 
 技术栈：Rust 2024 edition, tokio (async), reqwest (HTTP), serde/serde_json (序列化), clap (CLI), tantivy (全文搜索，已引入).
 
@@ -18,21 +18,26 @@ aki/
 ├── Cargo.toml              # Rust 项目配置，定义库+3个二进制目标
 ├── database/               # 数据存储根目录
 │   ├── aki.toml            # 运行时配置文件
-│   └── anime/              # 番剧 JSON 数据文件
-│       └── [YYYY-MM-DD] 番名.json
-└── src/
-    ├── lib.rs              # 库根：模块声明 + 公共 API 重导出
-    ├── config.rs           # 配置加载模块
-    ├── anime/              # 番剧领域模型（核心）
-    ├── bangumi/            # Bangumi API 集成
-    ├── meta/               # 元数据/ID 管理
-    ├── common/             # 共享基础类型
-    ├── resource/           # 资源管理（封面等，WIP）
-    ├── utils/              # 工具函数
-    └── bin/                # 可执行入口
-        ├── cli/            # 主 CLI 程序 (aki-cli)
-        ├── scripts/        # 一次性数据迁移脚本
-        └── test.rs         # 本地环境测试
+│   ├── anime/              # 番剧 JSON 数据文件
+│   │   └── [YYYY-MM-DD] 番名.json
+│   ├── game/               # 游戏 JSON 数据文件
+│   │   └── [日期] 游戏名.json
+│   └── steam/              # Steam 接口原始响应（appdetails{appid}.json 等）
+├── src/
+│   ├── lib.rs              # 库根：模块声明 + 公共 API 重导出
+│   ├── config.rs           # 配置加载模块
+│   ├── anime/              # 番剧领域模型（核心）
+│   ├── game/               # 游戏领域模型（与 anime 同构）
+│   ├── bangumi/            # Bangumi API 集成
+│   ├── steam/              # Steam 接口集成（与 bangumi 平级）
+│   ├── meta/               # 元数据/ID 管理
+│   ├── common/             # 共享基础类型
+│   ├── resource/           # 资源管理（封面等，WIP）
+│   ├── utils/              # 工具函数
+│   └── bin/                # 可执行入口
+│       ├── cli/            # 主 CLI 程序 (aki-cli)
+│       ├── scripts/        # 一次性数据迁移脚本
+│       └── test.rs         # 本地环境测试
 ```
 
 ---
@@ -56,6 +61,16 @@ aki/
 | `LoadAnimeError` | `anime::core` | 加载错误 |
 | `SaveAnimeError` | `anime::core` | 保存错误 |
 | `anime_command` | `anime::command` | 番剧命令模块 |
+| `Game` | `game::core` | 游戏聚合根 |
+| `GameInfo` | `game::info` | 游戏信息 |
+| `GameInfoInternationalization` | `game::info` | 游戏信息国际化翻译 |
+| `GameRelease` | `game::info` | 发售日期（支持多种粒度） |
+| `GamePlatform` | `game::info` | 平台枚举 |
+| `GameAchievements` | `game::state` | 成就进度（已解锁/总数） |
+| `GameState` | `game::state` | 游玩状态 |
+| `GamePlayStatus` | `game::state` | 游玩状态枚举 |
+| `LoadGameError` / `SaveGameError` | `game::core` | 加载/保存错误 |
+| `game_command` | `game::command` | 游戏命令模块 |
 | `BangumiSubject` | `bangumi::subject` | Bangumi 条目 |
 | `BangumiSubjectType` | `bangumi::subject` | Bangumi 条目类型 |
 | `Language` | `common::language` | 语言枚举 |
@@ -68,6 +83,8 @@ aki/
 | `ImageType` | `resource::image_type` | 图片类型枚举 |
 | `Resource` | `resource::core` | 通用资源 |
 | `resource_type` | `resource::resource_type` | 资源类型模块 |
+
+`steam`（`src/steam/`）是 `pub mod`，与 `bangumi` 平级：里面只有「Steam 返回了什么」，不依赖游戏领域模型。
 
 ---
 
@@ -83,9 +100,18 @@ aki/
   - `root: PathBuf` — 配置文件所在目录（即 `database/`）
   - `locale: String` — 系统语言环境（自动检测）
   - `anime: ConfigAnime` — 番剧相关配置
+  - `game: ConfigGame` — 游戏相关配置
 - **`ConfigAnime`** — 番剧配置
   - `path: PathBuf` — 番剧数据相对于 root 的路径
   - `bangumi_api: String` — Bangumi API 地址（默认 `api.bgm.tv`）
+- **`ConfigGame`** — 游戏配置
+  - `path: PathBuf` — 游戏数据相对于 root 的路径
+  - `steam: ConfigSteam` — Steam 接口配置
+- **`ConfigSteam`** — Steam 配置
+  - `api_key: String` — Web API 密钥，留空则只有商店接口可用
+  - `steam_id: Option<String>` — SteamID64，拉玩家数据（已拥有游戏等）时需要
+  - `language` / `country` — 商店接口的文案语言与价格分区（默认 `schinese` / `cn`）
+  - `api` / `store_api` — 两个 API 的 base 地址
 - **`CONFIG: LazyLock<Config>`** — 全局单例，首次访问时加载
 
 ### 配置加载流程
@@ -107,6 +133,11 @@ aki/
 | `anime_bangumi_id_index_path()` | `{anime_data_path}/.aki/bangumi-id-index.json` |
 | `anime_state_db_path()` | `{root}/anime-state.db`（`export-state` 的默认输出） |
 | `bangumi_subject_path()` | `{root}/bangumi/subject` |
+| `game_data_path()` | `{root}/{game.path}` |
+| `steam_data_path()` | `{root}/steam`（Steam 原始响应） |
+| `namespace_data_path(kind)` | 按命名空间取目录，未登记的退回 `{root}/{kind}` |
+
+`namespace_data_path()` 是 [`MetaId`](src/meta/core.rs) 找数据目录的入口：`MetaId::json_data_path()` 调用 `T::json_path(id)`，而 `Namespace::json_path` → `Namespace::data_path()`，所以路径规则完全由命名空间决定，`meta` 模块里不再有任何领域名字的硬编码。
 
 ### 配置文件格式 (`database/aki.toml`)
 
@@ -114,6 +145,15 @@ aki/
 [anime]
 path = "./anime"
 bangumi_api = "https://proxy.scalt.xyz/api.bgm.tv"
+
+[game]
+path = "./game"
+
+[game.steam]
+api_key = "<Steam Web API key>"
+# steam_id = "7656119xxxxxxxxxx"
+language = "schinese"
+country = "cn"
 ```
 
 ---
@@ -372,6 +412,202 @@ CREATE TABLE anime_state (
 
 ---
 
+## 三·五、游戏领域 (`src/game/`)
+
+**目录**: [src/game/](src/game/)
+
+与 `anime` 同构的第二个领域：`core` 聚合根 + `info` / `state` / `namespace` + `steam` 转换层 + `command`。当前实现了「按 Steam appid 添加游戏」，评分模型（`score`）还没定，整个文件处于注释状态。
+
+### 3.5.1 Game 聚合根 (`src/game/core.rs`)
+
+```rust
+pub struct Game {
+    pub meta: Meta<GameNamespace>,
+    pub info: GameInfo,
+    pub internationalizations: BTreeMap<Language, GameInfoInternationalization>,
+    pub state: GameState,
+    pub steam_app_id: Option<u32>,
+    pub bangumi_id: Option<i64>,   // 预留：Bangumi 的 type=4 也是游戏
+}
+```
+
+方法：`new()` / `load()` / `load_with_meta_id()` / `save()` / `save_force()` / `save_as_meta_id()` / `save_as_meta_id_force()` / `iter_all()` / `iter_all_with_path()` / `Display`。与 `Anime` 的差别是来源 id 分开存放（`steam_app_id` 与 `bangumi_id`），而不是只留一个 `bangumi_id`。
+
+### 3.5.2 GameInfo 与发售日期 (`src/game/info.rs`)
+
+```rust
+pub struct GameInfo {
+    pub title: String,
+    pub summary: Option<String>,
+    pub developers: Vec<String>,
+    pub publishers: Vec<String>,
+    pub release: Option<GameRelease>,
+    pub platforms: Vec<GamePlatform>,
+    pub genres: Vec<String>,
+    pub tags: Vec<String>,
+    pub is_free: bool,
+    pub website: Option<String>,
+    pub cover: Option<String>,
+    pub screenshots: Vec<String>,
+    pub external_score: Option<ExternalScore>,  // Metacritic 等第三方分
+    pub review_count: Option<u32>,              // Steam 评论总数
+}
+```
+
+游戏不像番剧那样总有精确到日的播出日期，Steam 会给 `"2024"`、`"2025 年 第 1 季度"`、`"即将推出"` 这类只有粒度的值，所以 `release` 用枚举表示：
+
+| 变体 | 含义 | `date_prefix()` | 能否进 `meta.id` |
+|------|------|-----------------|------------------|
+| `Exact { date }` | 精确到日 | `2013-07-09` | 是 |
+| `YearMonth { year, month }` | 年月 | `2024-07` | 是 |
+| `Quarter { year, quarter }` | 季度 | `2025-Q1` | 是 |
+| `Year { year }` | 只有年份 | `2024` | 是 |
+| `Text { raw }` | 解析不出来，保留原文 | 原文 | 是 |
+| `Tba` | 未发售 | `unknown` | 是 |
+
+`GameInfo::release_prefix()` 给 `meta.id` 用，粒度不足时用对应粒度的字符串，而不是硬凑一个日期。
+
+### 3.5.3 GameState (`src/game/state.rs`)
+
+```rust
+pub enum GamePlayStatus { Plan, Playing, Played, OnHold, Dropped, Endless }
+
+pub struct GameAchievements { pub unlocked: u32, pub total: u32 }  // 显示为 23/45
+
+pub struct GameState {
+    play_status: GamePlayStatus,
+    played_seconds: Option<u64>,          // 游玩时长，单位：秒
+    achievements: Option<GameAchievements>,
+    last_played_at: Option<i64>,          // 最后一次游玩（Unix 秒），Steam 提供
+    comment: Option<String>,
+    play_start_date: Option<NaiveDate>,
+    play_finish_date: Option<NaiveDate>,
+}
+```
+
+- 时长存**秒**（`played_seconds`），`played_hours()` / `last_played_date()` 只是展示用的换算
+- 成就用「已解锁/总数」两个整数，`ratio()` 在 `total == 0` 时返回 `None`（不是 0），`Display` 输出 `23/45`
+- `GamePlayStatus` 与 `AnimeWatchStatus` 一样成对提供 `as_str()` / `TryFrom<&str>`，并有测试保证两者与 serde 序列化一致
+- `last_played_at` 用 `skip_serializing_if` 省略空值，旧数据文件不用改也能读
+
+**Steam → state 的写入规则**（`state::fill_from_steam`）：**只填 `None` 的字段**，手填的值一律保留。时长按 `Steam 分钟 × 60` 换算成秒；`0` 与负数（Steam 的哨兵值）视为没有数据，不写。
+
+### 3.5.4 Steam → Game 转换 (`src/game/steam.rs`)
+
+```rust
+pub fn parse_release(release_date: &steam::model::ReleaseDate) -> GameRelease;
+pub fn parse_app_details(body: &str, appid: u32) -> Result<AppDetails, SteamRequestError>;
+pub fn app_details_to_game(body: &str, appid: u32) -> Result<Game, SteamRequestError>;
+pub async fn request_app_details(client, appid) -> Result<AppDetailsRawStore, SteamRequestError>;
+pub fn load_app_details(appid: u32) -> Result<AppDetails, SteamRequestError>;
+```
+
+- `impl From<AppDetails> for Game`：拼 `meta.id`（`[日期前缀] 名称`）、按 `Language::detect_from` 填 i18n、把 Steam 的 `genres`/`categories` 映射成 `genres`/`tags`
+- `request_app_details` 先落**原始响应原文**，再从原文解析；`parse_app_details` / `load_app_details` 可以完全离线重跑解析（解析逻辑改了不必重新打接口）
+- `meta.id` 例子：`[2013-07-09] Dota 2`、`[2020-08-14] Factorio`
+
+### 3.5.5 命令：add-with-steam (`src/game/command/`)
+
+```rust
+pub async fn add_with_steam(client: &reqwest::Client, appid: u32) -> Result<Game, AddWithSteamError>
+```
+
+流程：请求 `store.steampowered.com/api/appdetails?appids={appid}&l={language}&cc={country}` → 原始响应写到 `database/steam/appdetails{appid}.json` → 解析成 `AppDetails` → 转成 `Game` → 写到 `database/game/[日期] 名称.json`。
+
+> 文件名里的 `/` 会被 `sanitize-filename` 去掉，所以「存放名 `appdetails/{appid}`」落到磁盘是 `appdetails{appid}.json`。要真正分子目录的话，把存放名换成不含 `/` 的分段、或让 `Namespace::json_path` 支持多级路径即可。
+
+### 3.5.6 命令：sync-owned-games (`src/game/command/sync_owned_games.rs`)
+
+```rust
+pub async fn sync_owned_games(client: &reqwest::Client, create_missing: bool)
+    -> Result<SyncResult, SyncOwnedGamesError>
+```
+
+流程：
+
+1. 调 `IPlayerService/GetOwnedGames`（用配置里的 `steam_id` + `api_key`），整份响应原文写到 `database/steam/owned-games.json`
+2. 遍历数据目录，建 `steam_app_id → (meta.id, 文件路径)` 映射
+3. 对库里每个游戏：
+   - **已有条目** → 只补 `played_seconds` / `last_played_at` 里为空的字段，真的改了才回写（`save_force`），没改不碰文件
+   - **没有条目且 `create_missing`** → 拉一次 `appdetails` 建条目（名称/发售日期/简介等），再把 Steam 的时长填进 `state`；两条请求之间隔 200 ms
+   - **没有条目且 `!create_missing`** → 记为 `pending`，不动数据文件
+4. 单条 appdetails 失败只记进 `SyncRecord::error`，**不会中断整个同步**
+
+`SyncResult` 提供 `created()` / `existing()` / `filled()` / `pending()` / `failed()` 五个计数；`--no-create` 只补不建，`--all` 打印每一条（默认只打印有变化或出错的）。
+
+> 同步不会改 `play_status`：Steam 的时长推不出「弃坑/搁置」这类判断，所以状态始终归你手填，同步只负责补时长与最后游玩时间。
+
+---
+
+## 三·六、Steam 接口集成 (`src/steam/`)
+
+**目录**: [src/steam/](src/steam/)
+
+与 `bangumi` 平级：这里只有「Steam 返回了什么」，不涉及游戏领域模型。`steam` 在 `lib.rs` 里是 `pub mod`，因为游戏领域（以及以后的其它领域）都要用它。
+
+### 3.6.1 Endpoint trait (`src/steam/http.rs`)
+
+一个接口 = 路径 + 查询参数 + 响应类型 + 解析方式：
+
+```rust
+pub trait Endpoint {
+    type Response;
+    fn path(&self) -> String;
+    fn params(&self) -> Vec<(&'static str, String)>;
+    fn use_web_api(&self) -> bool;
+    fn needs_api_key(&self) -> bool { false }
+    fn parse(&self, body: &str) -> Result<Self::Response, SteamRequestError>;
+}
+
+pub async fn request<E: Endpoint>(client, endpoint: &E) -> Result<E::Response, SteamRequestError>;
+```
+
+`request()` 统一负责：拼 base、追加 `key=`（配置为空且接口需要密钥时直接报 `MissingConfig`）、发请求、非 2xx 报 `Status`（带 200 字符的响应片段）、把 JSON 错误补上 URL。加新接口只要实现 trait，不用再写一遍请求与错误处理。
+
+全局配置 `reqwest` 的 `query` 特性用于拼查询参数。
+
+### 3.6.2 已实现的接口 (`src/steam/endpoints.rs`)
+
+| 结构体 | 接口 | 需要密钥 | Base |
+|--------|------|----------|------|
+| `AppDetailsEndpoint` | `/api/appdetails` | 否 | 商店 |
+| `OwnedGamesEndpoint` | `/IPlayerService/GetOwnedGames/v1/` | 是 | Web API |
+| `PlayerSummariesEndpoint` | `/ISteamUser/GetPlayerSummaries/v2/` | 是 | Web API |
+| `CurrentPlayersEndpoint` | `/ISteamUserStats/GetNumberOfCurrentPlayers/v1/` | 否 | Web API |
+
+`AppDetailsEndpoint` 兼容 Steam 现在会返回的**两种形状**：
+
+- 裸条目 `{"steam_appid":427520,"name":"Factorio",...}`
+- 老式外壳 `{"427520":{"success":true,"data":{...}}}`（字段更全，含 `price_overview`、配置需求等）
+
+判据是「顶层是否存在数字 appid 键」；两种情况下都会校验 `steam_appid` 与请求一致（不一致报 `ResponseAppIdMismatch`），`success: false` 报 `AppNotFound`。
+
+### 3.6.3 原始响应落盘 (`src/steam/store.rs`)
+
+`SteamNamespace` 把 `database/steam` 注册成一个命名空间，于是原始数据可以复用同一套路径规则：
+
+```rust
+pub struct SteamRawStore<T> { pub url: String, pub raw: String, /* marker */ }
+
+impl<T> SteamRawStore<T> {
+    pub fn save_named(&self, name: &str) -> Result<PathBuf, io::Error>;  // database/steam/{name}.json
+    pub fn load_named(name: &str) -> Result<String, io::Error>;
+    pub fn load_path(path) -> Result<String, io::Error>;
+}
+```
+
+`appdetails` 的存放名是 `appdetails{appid}`（`/` 被文件名安全化去掉），因此文件落在 `database/steam/appdetails{appid}.json`。里面存的是**响应原文**——字段顺序、缩进、外壳都保持原样，`serde_json` 只用于读取，不参与写盘；和 Bangumi 存 `Subject` 原样响应同理：字段解析错了可以离线重来，补字段也不用重新打接口。
+
+### 3.6.4 脏日期解析 (`src/steam/date.rs`)
+
+- `detect_year()`：任意一个落在 [1900, 2100] 的 4 位数
+- `detect_month()`：英文月名（简写/全称，大小写不敏感）
+- `detect_numeric_month()` / `detect_quarter()`：中文 `7 月` / `第 1 季度`，以及 `Q1`~`Q4`
+- `parse_date()` / `parse_steam_date()`：只有「年 + 月 + 日」都拿得到才返回 `Some`；`"2024"`、`"Jan 2024"`、`"第 1 季度"` 一律 `None`，交给 `GameRelease` 用别的粒度表示
+- 已覆盖中英文两种写法的单元测试，包括「不该被误判成某一天」的反例
+
+---
+
 ## 四、Bangumi API 集成 (`src/bangumi/`)
 
 **目录**: [src/bangumi/](src/bangumi/)
@@ -439,9 +675,14 @@ CREATE TABLE anime_state (
 ```rust
 pub trait Namespace {
     fn new() -> Self;
-    fn kind() -> &'static str;  // 如 "anime"
+    fn kind() -> &'static str;                 // 如 "anime"
+    fn data_path() -> PathBuf;                 // 如 database/anime，默认走 CONFIG
+    fn json_path(name: &str) -> PathBuf;       // {data_path}/{name}.json
+    fn save_json(name: &str, bytes: &[u8]) -> Result<PathBuf, io::Error>;
 }
 ```
+
+这是「路径由领域自己决定」的落点：`MetaId::json_data_path()` 只调 `T::json_path()`，`meta` 模块里不再出现 `anime` 之类的具体名字。新增一个领域（或像 `steam` 这样的原始数据目录）只需要实现 `data_path()`：由配置决定的走 `CONFIG.namespace_data_path(kind)`，特殊的直接指定目录（`AnimeNamespace`、`GameNamespace`、`SteamNamespace` 都覆盖了它）。
 
 同时包含序列化/反序列化辅助函数，确保命名空间字符串在序列化时一致。
 
@@ -580,19 +821,24 @@ pub fn normalize(path: impl AsRef<Path>) -> PathBuf
 **命令结构**:
 ```
 aki-cli
-└── anime (alias: a)
-    ├── add-with-bangumi <bangumi_id>
-    ├── update-with-bangumi <bangumi_id>
-    ├── build-index
-    ├── search <query> [-l <limit>]
-    ├── export-state [-o <path>]
-    ├── import-state [-i <path>] [--dry-run]
+├── anime (alias: a)
+│   ├── add-with-bangumi <bangumi_id>
+│   ├── update-with-bangumi <bangumi_id>
+│   ├── build-index
+│   ├── search <query> [-l <limit>]
+│   ├── export-state [-o <path>]
+│   ├── import-state [-i <path>] [--dry-run]
+│   └── verify
+└── game (alias: g)
+    ├── add-with-steam <appid>
+    ├── sync-owned-games [--no-create] [--all]
     └── verify
 ```
 
 **文件**:
-- [mod.rs](src/bin/cli/mod.rs) — CLI 入口，定义 `SubCommands::Anime` 子命令
+- [mod.rs](src/bin/cli/mod.rs) — CLI 入口，定义 `SubCommands::Anime` / `SubCommands::Game` 子命令
 - [anime.rs](src/bin/cli/anime.rs) — Anime 子命令，`AddWithBangumi` / `UpdateWithBangumi` 接收 Bangumi ID，创建 tokio runtime 调用对应的异步函数，成功后打印番剧标题；`BuildIndex` 重建全文索引与 bangumi-id 索引并打印两者数量；`ExportState` / `ImportState` 与 SQLite 互导 `state`
+- [game.rs](src/bin/cli/game.rs) — Game 子命令，`AddWithSteam` 接收 Steam appid，创建 tokio runtime 调用 `game_command::add_with_steam`，成功后打印游戏标题与时长/成就；`Verify` 尚未实现
 
 **使用示例**:
 ```bash
@@ -602,11 +848,17 @@ aki-cli anime export-state                  # 写到 database/anime-state.db
 aki-cli anime export-state -o /tmp/state.db # 或指定路径
 aki-cli anime import-state --dry-run        # 先看会改哪些
 aki-cli anime import-state                  # 真写回数据文件
+aki-cli game add-with-steam 570             # 拉取 Dota 2 并存原始响应
+aki-cli game sync-owned-games --no-create   # 只把「已拥有游戏」里为空的时长/最后游玩补上
+aki-cli game sync-owned-games --all         # 顺便给缺失的游戏建条目，并逐条打印
 # 或
 aki-cli a add-with-bangumi 475354
-aki-cli a update-with-bangumi 475354
 aki-cli a export-state
+aki-cli g add-with-steam 570
+aki-cli g sync-owned-games
 ```
+
+> `game add-with-steam` 需要能访问 `store.steampowered.com`；如果本机走代理，`reqwest` 会读 `HTTPS_PROXY`，没设置代理且直连不通时会报 `http request error`。
 
 ### 9.2 scripts — 数据迁移脚本 (`src/bin/scripts/`)
 
@@ -638,20 +890,38 @@ aki-cli a export-state
     ▼
 aki-cli (clap 解析命令)
     │
-    ▼
-anime_command::add_with_bangumi(bangumi_id)
+    ├─ anime_command::add_with_bangumi(bangumi_id)
+    │   │
+    │   ├── Bangumi API ◄── bangumi::Subject::request_with_id()
+    │   │   返回 JSON → 反序列化为 Subject
+    │   │
+    │   ├── Anime::from(subject)   ─── 自动语言检测 + 国际化填充
+    │   │
+    │   └── anime.save_as_meta_id()
+    │        │
+    │        └── MetaId::json_data_path() → T::json_path(id)
+    │             → AnimeNamespace::data_path() = CONFIG.anime_data_path()
+    │             → database/anime/[YYYY-MM-DD] 番名.json
     │
-    ├── Bangumi API ◄── bangumi::Subject::request_with_id()
-    │   返回 JSON → 反序列化为 Subject
-    │
-    ├── Anime::from(subject)   ─── 自动语言检测 + 国际化填充
-    │
-    └── anime.save_as_meta_id()
-         │
-         └── MetaId::json_data_path()
-              → database/anime/[YYYY-MM-DD] 番名.json
-              → serde_json 序列化写入
+    └─ game_command::add_with_steam(appid)
+        │
+        ├── steam::request(AppDetailsEndpoint) ◄── store.steampowered.com/api/appdetails
+        │   │
+        │   ├── SteamRawStore::save_named("appdetails/{appid}")
+        │   │    → database/steam/appdetails{appid}.json（响应原文先落盘）
+        │   │
+        │   └── AppDetailsEndpoint::parse() → AppDetails
+        │
+        ├── Game::from(app_details)   ─── 发售日期粒度降级 + 语言检测 + 国际化填充
+        │
+        └── game.save_as_meta_id()
+             │
+             └── MetaId::json_data_path() → T::json_path(id)
+                  → GameNamespace::data_path() = CONFIG.game_data_path()
+                  → database/game/[日期前缀] 游戏名.json
 ```
+
+两个领域的落盘路径都只经过 `Namespace` 提供的静态方法，因此 `meta` 模块与具体领域完全解耦；`steam` 原始响应只是多注册了一个 `SteamNamespace`。
 
 ## 十一、依赖说明
 
@@ -659,7 +929,7 @@ anime_command::add_with_bangumi(bangumi_id)
 |------|------|
 | `serde` / `serde_json` | JSON 序列化/反序列化 |
 | `clap` | CLI 参数解析 |
-| `reqwest` | HTTP 客户端（调用 Bangumi API） |
+| `reqwest` | HTTP 客户端（调用 Bangumi / Steam 接口），启用 `json` 与 `query` 特性 |
 | `tokio` | 异步运行时 |
 | `chrono` | 日期时间处理 |
 | `uuid` (v7) | 唯一标识符生成 |

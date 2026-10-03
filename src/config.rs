@@ -35,11 +35,67 @@ fn default_bangimi_api() -> String {
     "api.bgm.tv".to_string()
 }
 
+fn default_steam_api() -> String {
+    "https://api.steampowered.com".to_string()
+}
+
+fn default_steam_store_api() -> String {
+    "https://store.steampowered.com".to_string()
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ConfigAnime {
     pub path: PathBuf,
     #[serde(default = "default_bangimi_api")]
     pub bangumi_api: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ConfigGame {
+    pub path: PathBuf,
+    #[serde(default)]
+    pub steam: ConfigSteam,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ConfigSteam {
+    /// Steam Web API 密钥。留空则不发送，需要密钥的接口会直接报错。
+    #[serde(default)]
+    pub api_key: String,
+    /// SteamID64，用于拉取「已拥有游戏」「最近游玩」等玩家数据。
+    #[serde(default)]
+    pub steam_id: Option<String>,
+    /// 商店接口的响应语言，如 `schinese`。
+    #[serde(default = "default_steam_language")]
+    pub language: String,
+    /// 商店接口的地区，决定价格与分区，如 `cn`。
+    #[serde(default = "default_steam_country")]
+    pub country: String,
+    #[serde(default = "default_steam_api")]
+    pub api: String,
+    #[serde(default = "default_steam_store_api")]
+    pub store_api: String,
+}
+
+fn default_steam_language() -> String {
+    "schinese".to_string()
+}
+
+fn default_steam_country() -> String {
+    "cn".to_string()
+}
+
+impl Default for ConfigSteam {
+    fn default() -> Self {
+        Self {
+            api_key: String::new(),
+            steam_id: None,
+            language: default_steam_language(),
+            country: default_steam_country(),
+            api: default_steam_api(),
+            store_api: default_steam_store_api(),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -49,6 +105,7 @@ pub struct Config {
     #[serde(default, skip)]
     pub locale: String,
     pub anime: ConfigAnime,
+    pub game: ConfigGame,
 }
 
 impl Config {
@@ -105,6 +162,36 @@ impl Config {
     pub fn anime_state_db_path(&self) -> &'static Path {
         static PATH: OnceLock<PathBuf> = OnceLock::new();
         PATH.get_or_init(|| self.root.join("anime-state.db"))
+    }
+
+    pub fn game_data_path(&self) -> &'static Path {
+        static PATH: OnceLock<PathBuf> = OnceLock::new();
+        PATH.get_or_init(|| utils::path::normalize(self.root.join(&self.game.path)))
+    }
+
+    /// Steam 原始响应（商店接口与 Web API）的落盘目录。
+    pub fn steam_data_path(&self) -> &'static Path {
+        static PATH: OnceLock<PathBuf> = OnceLock::new();
+        PATH.get_or_init(|| utils::path::normalize(self.root.join("steam")))
+    }
+
+    /// 按命名空间 `kind()` 取数据目录，供 `Namespace::data_path()` 的默认实现使用。
+    ///
+    /// 每个目录单独缓存，并各自归一化路径；未登记的命名空间退回
+    /// `{root}/{kind}`。
+    pub fn namespace_data_path(&self, kind: &str) -> PathBuf {
+        static PATHS: OnceLock<std::sync::Mutex<std::collections::BTreeMap<String, PathBuf>>> =
+            OnceLock::new();
+        let paths = PATHS.get_or_init(|| std::sync::Mutex::new(std::collections::BTreeMap::new()));
+        let mut paths = paths.lock().expect("namespace data path cache poisoned");
+        paths
+            .entry(kind.to_string())
+            .or_insert_with(|| match kind {
+                "anime" => self.anime_data_path().to_path_buf(),
+                "game" => self.game_data_path().to_path_buf(),
+                other => utils::path::normalize(self.root.join(other)),
+            })
+            .clone()
     }
 }
 
