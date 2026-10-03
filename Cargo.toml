@@ -39,3 +39,4 @@ tantivy-jieba = { version = "0.20" }
 lindera = { version = "2", features = ["embed-ipadic"] }
 lindera-tantivy = { path = "./lindera-tantivy", features = ["embed-ipadic"] }
 fjall = { version = "3" }
+rusqlite = { version = "0.40.2", features = ["bundled"] }

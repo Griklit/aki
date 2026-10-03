@@ -100,6 +100,12 @@ impl Config {
         static PATH: OnceLock<PathBuf> = OnceLock::new();
         PATH.get_or_init(|| self.root.join("bangumi/subject"))
     }
+
+    /// `export-state` 没指定 `--output` 时写出的数据库文件。
+    pub fn anime_state_db_path(&self) -> &'static Path {
+        static PATH: OnceLock<PathBuf> = OnceLock::new();
+        PATH.get_or_init(|| self.root.join("anime-state.db"))
+    }
 }
 
 #[cfg(test)]

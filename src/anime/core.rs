@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::fs::File;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 #[derive(Debug, thiserror::Error)]
@@ -113,6 +113,14 @@ impl Anime {
     }
 
     pub fn iter_all() -> impl Iterator<Item = Anime> {
+        Self::iter_all_with_path().map(|(_, anime)| anime)
+    }
+
+    /// 与 [`Self::iter_all`] 相同，但同时给出每条数据是从哪个文件读出来的。
+    ///
+    /// 需要原地改写这条数据的命令用它，才能区分「文件就在规范路径上」和
+    /// 「文件名与 `meta.id` 不一致」这两种情况。
+    pub fn iter_all_with_path() -> impl Iterator<Item = (PathBuf, Anime)> {
         let anime_dir = CONFIG.anime_data_path();
         std::fs::read_dir(anime_dir)
             .ok()
@@ -125,7 +133,7 @@ impl Anime {
                     return None;
                 }
                 match Self::load(&path) {
-                    Ok(anime) => Some(anime),
+                    Ok(anime) => Some((path, anime)),
                     Err(e) => {
                         eprintln!(
                             "Warning: failed to load anime file '{}': {}",

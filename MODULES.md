@@ -105,6 +105,7 @@ aki/
 | `anime_tantivy_index_path()` | `{anime_data_path}/.aki/tantivy-index` |
 | `anime_fjall_index_path()` | `{anime_data_path}/.aki/fjall-index`（预留，未使用） |
 | `anime_bangumi_id_index_path()` | `{anime_data_path}/.aki/bangumi-id-index.json` |
+| `anime_state_db_path()` | `{root}/anime-state.db`（`export-state` 的默认输出） |
 | `bangumi_subject_path()` | `{root}/bangumi/subject` |
 
 ### 配置文件格式 (`database/aki.toml`)
@@ -142,6 +143,7 @@ pub struct Anime {
 **方法**:
 - `new(...)` — 构造函数
 - `load(path)` / `load_with_meta_id(meta_id)` — 从 JSON 文件反序列化加载
+- `iter_all()` / `iter_all_with_path()` — 遍历数据目录；后者同时给出每条数据是从哪个文件读出来的，供需要原地改写的命令区分「文件在规范路径上」与「文件名与 `meta.id` 不一致」
 - `save(path)` / `save_as_meta_id()` — 序列化保存为 JSON 文件（不允许覆盖已存在文件）
 - `Display` trait — 根据系统语言智能显示标题（优先显示翻译名）
 - `From<BangumiSubject>` — 从 Bangumi API 返回的条目创建 Anime，自动检测语言并填充国际化信息
@@ -318,6 +320,55 @@ impl BangumiIdIndex {
 **功能**: 按语言分词的标题/摘要全文搜索索引，位于 `{anime_data_path}/.aki/tantivy-index/`，由 `aki-cli anime build-index` 全量重建。文档以 `meta.id` 为键，因此数据文件改名后（例如 `update-with-bangumi` 重算了 `meta.id`）必须重新执行 `build-index`（该命令会同时重建上面的 bangumi-id 索引）。
 
 > [src/anime/index/fjall.rs](src/anime/index/fjall.rs) 是为 fjall 键值索引预留的未完成实现，当前未编入模块树（`index/mod.rs` 中仍是注释状态）。
+
+### 3.9 命令：export_state / import_state (`src/anime/command/`)
+
+**文件**: [export_state.rs](src/anime/command/export_state.rs)、[import_state.rs](src/anime/command/import_state.rs)
+
+**功能**: 把全部番剧的 `state`（用户手填的观看状态、评分、评论、日期）导出成一个 SQLite 文件，供 SQL 查询或其他工具消费；也可以反过来从该文件读回并更新数据文件。
+
+```rust
+pub fn export_state(output: Option<&Path>) -> Result<(PathBuf, usize), ExportStateError>
+pub fn import_state(input: Option<&Path>, dry_run: bool) -> Result<ImportStateResult, ImportStateError>
+```
+
+- 默认输出/读取 [`Config::anime_state_db_path()`](src/config.rs)（即 `{root}/anime-state.db`），可用 `--output` / `--input` 覆盖
+- 每次导出都 **`DROP TABLE IF EXISTS anime_state` + 重建**，结果始终是当前状态的完整快照；同一个库里其他表不受影响
+- 全部插入包在一个事务里，并写 `PRAGMA user_version = 1` 便于以后改结构
+- `meta.id` 是主键。理论上不会重复（文件名就是 sanitize 过的 `meta.id`），万一重复则保留最后一个并打印警告，而不是悄悄少导一条
+- 分数**按原样导出、不做范围裁剪**，超出字段约定范围的值能直接看出来；f32 会取到 6 位小数，避免 `0.8` 变成 `0.800000011920929`
+
+表结构：
+
+```sql
+CREATE TABLE anime_state (
+    meta_id           TEXT PRIMARY KEY,  -- Anime::meta.id
+    bangumi_id        INTEGER,
+    title             TEXT NOT NULL,     -- info.title（原名）
+    title_zh          TEXT,              -- meta.data.title（name_cn）
+    watch_status      TEXT NOT NULL,     -- watched / dropped / plan / on-hold / ...
+    episodes_watched  INTEGER NOT NULL,
+    positive          REAL,              -- AnimeScore::positive
+    negative          REAL,
+    recommendation    INTEGER,           -- 手填的五档推荐分
+    comment           TEXT,
+    watch_start_date  TEXT,              -- ISO 日期，无则为 NULL
+    watch_finish_date TEXT
+)
+```
+
+#### import_state 的行为
+
+导入是**会写数据文件**的操作，因此约束写得很死：
+
+1. **只改 `state`**：`info` / `i18n` / `meta` / `bangumi_id` 一律不碰
+2. **先全部校验、再落盘**：任何一行不合法（未知 `watch_status`、分数越界、`episodes_watched` 超出 `u16`、日期不是 `YYYY-MM-DD`）就**整体不写**，并列出问题行，不会留下改了一半的数据。这里刻意不用 `AnimeScore::new()`——它会静默 clamp 越界值
+3. **只在真的变了才写**：`state` 与文件里完全一致的条目会被跳过，不白写一遍文件、也不动 mtime。所以「导出后原样导入」是纯 no-op
+4. **先写临时文件再改名**（`*.json.tmp` → `*.json`），避免写到一半失败把已有数据文件写坏
+5. **文件名不是规范名时会清理**：改写目标是 `meta.id` 推算出的规范文件名；如果这条数据其实是从另一个文件名读出来的（手工改过名、或从别处复制来的），写完后会删掉旧文件并打印警告——否则同一个 `meta.id` 会在目录里留下两份
+6. DB 里有、但数据目录里找不到对应条目的 `meta.id` 会作为 `unknown` 报告出来，不算错误
+
+依赖 `rusqlite`（`bundled` 特性：SQLite 源码随 crate 一起编译，不需要系统安装 SQLite）。
 
 ---
 
@@ -534,20 +585,27 @@ aki-cli
     ├── update-with-bangumi <bangumi_id>
     ├── build-index
     ├── search <query> [-l <limit>]
+    ├── export-state [-o <path>]
+    ├── import-state [-i <path>] [--dry-run]
     └── verify
 ```
 
 **文件**:
 - [mod.rs](src/bin/cli/mod.rs) — CLI 入口，定义 `SubCommands::Anime` 子命令
-- [anime.rs](src/bin/cli/anime.rs) — Anime 子命令，`AddWithBangumi` / `UpdateWithBangumi` 接收 Bangumi ID，创建 tokio runtime 调用对应的异步函数，成功后打印番剧标题；`BuildIndex` 重建全文索引与 bangumi-id 索引并打印两者数量
+- [anime.rs](src/bin/cli/anime.rs) — Anime 子命令，`AddWithBangumi` / `UpdateWithBangumi` 接收 Bangumi ID，创建 tokio runtime 调用对应的异步函数，成功后打印番剧标题；`BuildIndex` 重建全文索引与 bangumi-id 索引并打印两者数量；`ExportState` / `ImportState` 与 SQLite 互导 `state`
 
 **使用示例**:
 ```bash
 aki-cli anime add-with-bangumi 475354
 aki-cli anime update-with-bangumi 475354
+aki-cli anime export-state                  # 写到 database/anime-state.db
+aki-cli anime export-state -o /tmp/state.db # 或指定路径
+aki-cli anime import-state --dry-run        # 先看会改哪些
+aki-cli anime import-state                  # 真写回数据文件
 # 或
 aki-cli a add-with-bangumi 475354
 aki-cli a update-with-bangumi 475354
+aki-cli a export-state
 ```
 
 ### 9.2 scripts — 数据迁移脚本 (`src/bin/scripts/`)
@@ -609,4 +667,5 @@ anime_command::add_with_bangumi(bangumi_id)
 | `toml` | 配置文件解析 |
 | `anyhow` / `thiserror` | 错误处理 |
 | `sys-locale` | 系统语言环境检测 |
+| `rusqlite`（`bundled`） | 导出 state 到 SQLite；SQLite 源码随 crate 编译 |
 | `tantivy` | 全文搜索（已引入，尚未使用） |

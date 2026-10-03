@@ -1,6 +1,7 @@
 use aki::anime_command;
 use anyhow::Ok;
 use clap::{Args, Parser, Subcommand};
+use std::path::PathBuf;
 
 #[derive(Args)]
 pub struct AddWithBangumi {
@@ -24,6 +25,25 @@ pub struct Search {
     limit: usize,
 }
 
+#[derive(Args)]
+pub struct ExportState {
+    /// Output SQLite file (default: {root}/anime-state.db)。
+    /// The `anime_state` table in it is dropped and rebuilt on every run;
+    /// other tables in the same file are left alone.
+    #[arg(short, long)]
+    output: Option<PathBuf>,
+}
+
+#[derive(Args)]
+pub struct ImportState {
+    /// SQLite file to read (default: {root}/anime-state.db)。
+    #[arg(short, long)]
+    input: Option<PathBuf>,
+    /// Only report what would change; write nothing.
+    #[arg(long)]
+    dry_run: bool,
+}
+
 #[derive(Subcommand)]
 pub enum AnimeSubCommands {
     /// Add an anime entry with a Bangumi ID.
@@ -40,6 +60,13 @@ pub enum AnimeSubCommands {
     /// Full-text search across anime titles and summaries.
     /// Requires an index to be built first with `build-index`.
     Search(Search),
+    /// Export every anime's `state` (watch status, score, comment, dates) to a
+    /// SQLite file as a single `anime_state` table.
+    ExportState(ExportState),
+    /// Read a SQLite file written by `export-state` and update each anime's
+    /// `state` from it. Only `state` is touched. Rows whose state already
+    /// matches are skipped, and nothing is written unless every row is valid.
+    ImportState(ImportState),
     /// Verify the structural correctness of the anime data file.
     Verify,
 }
@@ -77,6 +104,47 @@ impl AnimeSubCommands {
                         .collect::<Vec<_>>()
                         .join("\n"),
                 ))
+            }
+            Self::ExportState(args) => {
+                let (path, count) = anime_command::export_state(args.output.as_deref())?;
+                Ok(Some(format!(
+                    "exported {} anime states to {}",
+                    count,
+                    path.display()
+                )))
+            }
+            Self::ImportState(args) => {
+                let result = anime_command::import_state(args.input.as_deref(), args.dry_run)?;
+                let mut lines = vec![format!(
+                    "{} {} anime states ({} unchanged)",
+                    if args.dry_run {
+                        "would import"
+                    } else {
+                        "imported"
+                    },
+                    result.updated.len(),
+                    result.unchanged
+                )];
+                for meta_id in result.updated.iter().take(10) {
+                    lines.push(format!("  updated: {meta_id}"));
+                }
+                if result.updated.len() > 10 {
+                    lines.push(format!("  … and {} more", result.updated.len() - 10));
+                }
+                if !result.unknown.is_empty() {
+                    lines.push(format!(
+                        "  {} row(s) had no matching anime: {}",
+                        result.unknown.len(),
+                        result
+                            .unknown
+                            .iter()
+                            .take(5)
+                            .cloned()
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ));
+                }
+                Ok(Some(lines.join("\n")))
             }
             Self::Verify => {
                 let (count, errors) = anime_command::verify()?;

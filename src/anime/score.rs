@@ -1,7 +1,7 @@
 use crate::Score;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct AnimeScore {
     pub positive: Option<f32>,      // 0.0~1.0
     pub negative: Option<f32>,      // 0.0~1.0
