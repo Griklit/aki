@@ -44,6 +44,7 @@ impl Language {
         [Self::ZhCn, Self::JaJp, Self::EnUs]
     }
 
+    /// 检测文本所属语言
     #[must_use]
     pub fn detect_from(text: &str) -> Self {
         let mut kana = 0;

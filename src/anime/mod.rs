@@ -22,6 +22,16 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct Anime {
+    pub meta: Meta<AnimeNamespace>,
+    pub info: AnimeInfo,
+    #[serde(rename = "i18n")]
+    pub internationalizations: BTreeMap<Language, AnimeInfoInternationalization>,
+    pub state: AnimeState,
+    pub bangumi_id: Option<i64>,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum LoadAnimeError {
     #[error("io error")]
@@ -38,16 +48,6 @@ pub enum SaveAnimeError {
     JsonSerialize(#[source] serde_json::Error),
     #[error("file exists")]
     Exists,
-}
-
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct Anime {
-    pub meta: Meta<AnimeNamespace>,
-    pub info: AnimeInfo,
-    #[serde(rename = "i18n")]
-    pub internationalizations: BTreeMap<Language, AnimeInfoInternationalization>,
-    pub state: AnimeState,
-    pub bangumi_id: Option<i64>,
 }
 
 impl Anime {
