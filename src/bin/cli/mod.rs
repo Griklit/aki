@@ -12,8 +12,10 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum SubCommands {
+    /// 动画
     #[command(visible_alias = "a")]
     Anime(anime::AnimeCommand),
+    /// 游戏
     #[command(visible_alias = "g")]
     Game(game::GameCommand),
 }

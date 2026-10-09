@@ -5,11 +5,13 @@ use std::path::PathBuf;
 
 #[derive(Args)]
 pub struct AddWithBangumi {
+    /// Bangumi 条目 ID。
     bangumi_id: i64,
 }
 
 #[derive(Args)]
 pub struct UpdateWithBangumi {
+    /// Bangumi 条目 ID。
     bangumi_id: i64,
 }
 
@@ -18,56 +20,45 @@ pub struct BuildIndex;
 
 #[derive(Args)]
 pub struct Search {
-    /// Search query (searches across titles and summaries)
+    /// 检索关键词（匹配标题和简介）。
     query: String,
-    /// Maximum number of results to return
+    /// 返回结果数量上限。
     #[arg(short, long, default_value = "16")]
     limit: usize,
 }
 
 #[derive(Args)]
 pub struct ExportState {
-    /// Output SQLite file (default: {root}/anime-state.db)。
-    /// The `anime_state` table in it is dropped and rebuilt on every run;
-    /// other tables in the same file are left alone.
+    /// 输出的 SQLite 文件（默认 {root}/anime-state.db，anime_state 表每次重建）。
     #[arg(short, long)]
     output: Option<PathBuf>,
 }
 
 #[derive(Args)]
 pub struct ImportState {
-    /// SQLite file to read (default: {root}/anime-state.db)。
+    /// 读取的 SQLite 文件（默认 {root}/anime-state.db）。
     #[arg(short, long)]
     input: Option<PathBuf>,
-    /// Only report what would change; write nothing.
+    /// 只显示将要发生的变化，不写入。
     #[arg(long)]
     dry_run: bool,
 }
 
 #[derive(Subcommand)]
 pub enum AnimeSubCommands {
-    /// Add an anime entry with a Bangumi ID.
+    /// 按 Bangumi 条目 ID 添加动画。
     AddWithBangumi(AddWithBangumi),
-    /// Re-fetch an existing anime entry from Bangumi and refresh its data.
-    /// Bangumi-provided fields (info, i18n) are overwritten; the `state` you
-    /// filled in yourself is left untouched. The data file is renamed when the
-    /// Bangumi title or air date changed, so run `build-index` afterwards.
+    /// 按 Bangumi 条目 ID 重新拉取并刷新动画数据（不改动 state）。
     UpdateWithBangumi(UpdateWithBangumi),
-    /// Build the indexes for all anime entries: the full-text search index
-    /// ({anime_data_path}/.aki/tantivy-index/) and the bangumi-id index
-    /// ({anime_data_path}/.aki/bangumi-id-index.json).
+    /// 重建动画索引（全文检索和 Bangumi ID 索引）。
     BuildIndex(BuildIndex),
-    /// Full-text search across anime titles and summaries.
-    /// Requires an index to be built first with `build-index`.
+    /// 按标题和简介全文检索动画。
     Search(Search),
-    /// Export every anime's `state` (watch status, score, comment, dates) to a
-    /// SQLite file as a single `anime_state` table.
+    /// 把所有动画的 state 导出到 SQLite 文件。
     ExportState(ExportState),
-    /// Read a SQLite file written by `export-state` and update each anime's
-    /// `state` from it. Only `state` is touched. Rows whose state already
-    /// matches are skipped, and nothing is written unless every row is valid.
+    /// 从 export-state 生成的 SQLite 文件导入 state。
     ImportState(ImportState),
-    /// Verify the structural correctness of the anime data file.
+    /// 校验动画数据文件结构。
     Verify,
 }
 

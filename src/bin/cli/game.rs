@@ -10,28 +10,21 @@ pub struct AddWithSteam {
 
 #[derive(Args)]
 pub struct SyncOwnedGames {
-    /// Only fill in existing entries; do not create data files for owned games
-    /// that have none yet.
+    /// 只补全已有条目，不为库中未收录的游戏创建数据文件。
     #[arg(long)]
     no_create: bool,
-    /// Print every owned game instead of only the ones that changed or failed.
+    /// 输出全部已拥有游戏，而不只是有变化或失败的。
     #[arg(long)]
     all: bool,
 }
 
 #[derive(Subcommand)]
 pub enum GameSubCommands {
-    /// Add a game entry with a Steam appid. The raw store response is saved to
-    /// `database/steam/appdetails{appid}.json` first, then the game data file is
-    /// written to `database/game/`.
+    /// 按 Steam appid 添加游戏。
     AddWithSteam(AddWithSteam),
-    /// Pull the Steam library (`GetOwnedGames`), save the raw response to
-    /// `database/steam/owned-games.json`, then fill in the `state` fields that
-    /// are still empty (`played_seconds`, `last_played_at`). Values you typed
-    /// yourself are never overwritten. Owned games without a data file get one
-    /// created (one `appdetails` request each); pass `--no-create` to skip that.
+    /// 同步 Steam 库，补全 state 中仍为空的字段（不动手动填写的值）。
     SyncOwnedGames(SyncOwnedGames),
-    /// Verify the structural correctness of the game data file.
+    /// 校验游戏数据文件结构。
     Verify,
 }
 
