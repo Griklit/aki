@@ -268,7 +268,8 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::*;
-    use crate::{AnimeInfo, AnimeInfoInternationalization, Language, Meta};
+    use crate::anime::{AnimeInfo, AnimeInfoInternationalization};
+    use crate::{Language, Meta};
     use chrono::NaiveDate;
 
     fn sample(id: &str, state: AnimeState) -> Anime {

@@ -1,5 +1,5 @@
 use super::super::{Game, SaveGameError, steam};
-use crate::steam::SteamRequestError;
+use crate::source::steam::SteamRequestError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AddWithSteamError {
@@ -20,6 +20,7 @@ pub async fn add_with_steam(
     let raw = steam::request_app_details(client, appid).await?;
     let app = steam::parse_app_details(&raw.raw, appid)?;
     let game = Game::from(app);
-    game.save_as_meta_id().map_err(AddWithSteamError::SaveGame)?;
+    game.save_as_meta_id()
+        .map_err(AddWithSteamError::SaveGame)?;
     Ok(game)
 }

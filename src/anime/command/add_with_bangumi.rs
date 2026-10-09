@@ -1,7 +1,7 @@
 use std::io;
 
 use super::super::{Anime, SaveAnimeError, index::BangumiIdIndex};
-use crate::bangumi::Subject;
+use crate::source::bangumi::Subject;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AddWithBangumiError {

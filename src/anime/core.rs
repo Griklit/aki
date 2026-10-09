@@ -1,5 +1,6 @@
 use super::{AnimeInfo, AnimeInfoInternationalization, AnimeNamespace, AnimeState};
-use crate::{BangumiSubject, CONFIG, Language, Meta, MetaId};
+use crate::source::bangumi::Subject;
+use crate::{CONFIG, Language, Meta, MetaId};
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -147,8 +148,8 @@ impl Anime {
     }
 
     #[must_use]
-    pub fn bangumi_subject(&self) -> Option<Result<BangumiSubject, io::Error>> {
-        Some(BangumiSubject::load_with_id(self.bangumi_id?))
+    pub fn bangumi_subject(&self) -> Option<Result<Subject, io::Error>> {
+        Some(Subject::load_with_id(self.bangumi_id?))
     }
 }
 
@@ -182,8 +183,8 @@ impl fmt::Display for Anime {
     }
 }
 
-impl From<BangumiSubject> for Anime {
-    fn from(subject: BangumiSubject) -> Self {
+impl From<Subject> for Anime {
+    fn from(subject: Subject) -> Self {
         let meta_id = format!(
             "[{}] {}",
             subject
@@ -242,8 +243,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_from_bangumi() {
-        let subject_json_str = include_str!("../bangumi/subject-example.json");
-        let subject: BangumiSubject = serde_json::from_str(subject_json_str).unwrap();
+        let subject_json_str = include_str!("../source/bangumi/subject-example.json");
+        let subject: Subject = serde_json::from_str(subject_json_str).unwrap();
         let anime = Anime::from(subject);
         dbg!(anime);
     }

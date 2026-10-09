@@ -137,7 +137,8 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::*;
-    use crate::{AnimeInfo, AnimeScore, AnimeState, AnimeWatchStatus, Language, Meta};
+    use crate::anime::{AnimeInfo, AnimeScore, AnimeState, AnimeWatchStatus};
+    use crate::{Language, Meta};
     use chrono::NaiveDate;
 
     fn sample(id: &str, bangumi_id: Option<i64>, state: AnimeState) -> Anime {
@@ -151,7 +152,7 @@ mod tests {
                 season: None,
                 episodes: Some(12),
             },
-            BTreeMap::<Language, crate::AnimeInfoInternationalization>::new(),
+            BTreeMap::<Language, crate::anime::AnimeInfoInternationalization>::new(),
             state,
             bangumi_id,
         )

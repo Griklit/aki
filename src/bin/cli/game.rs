@@ -1,4 +1,4 @@
-use aki::game_command::{self, SyncResult};
+use aki::game::command as game_command;
 use anyhow::Ok;
 use clap::{Args, Parser, Subcommand};
 
@@ -50,7 +50,7 @@ impl GameSubCommands {
 }
 
 /// 把同步结果整理成人看的几行。
-fn format_sync(result: &SyncResult, all: bool) -> String {
+fn format_sync(result: &game_command::SyncResult, all: bool) -> String {
     let mut lines = Vec::new();
     if let Some(path) = &result.raw_path {
         lines.push(format!("raw response saved to {}", path.display()));
@@ -69,7 +69,11 @@ fn format_sync(result: &SyncResult, all: bool) -> String {
         all || !record.filled.is_empty() || record.created || record.error.is_some()
     };
     for record in result.records.iter().filter(|r| interesting(r)) {
-        let mut line = format!("  {} {}", record.appid, record.name.as_deref().unwrap_or("?"));
+        let mut line = format!(
+            "  {} {}",
+            record.appid,
+            record.name.as_deref().unwrap_or("?")
+        );
         if let Some(seconds) = record.played_seconds {
             line += &format!(" — {seconds}s");
         }

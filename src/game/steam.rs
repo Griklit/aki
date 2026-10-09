@@ -8,7 +8,7 @@ use crate::game::info::{
     ExternalScore, GameInfo, GameInfoInternationalization, GamePlatform, GameRelease,
 };
 use crate::game::state::GameState;
-use crate::steam::{
+use crate::source::steam::{
     AppDetails, AppDetailsEndpoint, Endpoint, SteamNamespace, SteamRawStore, SteamRequestError,
     model, request_with_raw,
 };
@@ -166,7 +166,11 @@ impl From<AppDetails> for Game {
                 release,
                 platforms: platforms_of(&app.platforms),
                 genres: app.genres.iter().map(|g| g.description.clone()).collect(),
-                tags: app.categories.iter().map(|c| c.description.clone()).collect(),
+                tags: app
+                    .categories
+                    .iter()
+                    .map(|c| c.description.clone())
+                    .collect(),
                 is_free: app.is_free,
                 website: app.website.clone(),
                 cover,
@@ -242,7 +246,10 @@ mod tests {
         let quarter = app_details_to_game(APPDETAILS_QUARTER, 570).unwrap();
         assert_eq!(
             quarter.info.release,
-            Some(GameRelease::Quarter { year: 2025, quarter: 1 })
+            Some(GameRelease::Quarter {
+                year: 2025,
+                quarter: 1
+            })
         );
         assert_eq!(quarter.info.release_prefix(), "2025-Q1");
     }
@@ -250,7 +257,8 @@ mod tests {
     #[test]
     fn wrong_appid_is_error() {
         assert!(
-            app_details_to_game(r#"{"steam_appid":999,"name":"Other","type":"game"}"#, 570).is_err()
+            app_details_to_game(r#"{"steam_appid":999,"name":"Other","type":"game"}"#, 570)
+                .is_err()
         );
         assert!(app_details_to_game("not json", 570).is_err());
     }

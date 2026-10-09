@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use super::super::{Anime, SaveAnimeError, index::BangumiIdIndex};
 use crate::MetaId;
-use crate::bangumi::Subject;
+use crate::source::bangumi::Subject;
 
 #[derive(Debug, thiserror::Error)]
 pub enum UpdateWithBangumiError {
@@ -115,10 +115,11 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::*;
-    use crate::{AnimeInfo, AnimeInfoInternationalization, AnimeState, Language, Meta};
+    use crate::anime::{AnimeInfo, AnimeInfoInternationalization, AnimeState};
+    use crate::{Language, Meta};
 
     fn subject_example() -> Subject {
-        serde_json::from_str(include_str!("../../bangumi/subject-example.json")).unwrap()
+        serde_json::from_str(include_str!("../../source/bangumi/subject-example.json")).unwrap()
     }
 
     fn outdated_anime(bangumi_id: i64) -> Anime {

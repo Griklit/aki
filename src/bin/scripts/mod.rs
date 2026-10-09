@@ -1,4 +1,4 @@
-use aki::Anime;
+use aki::anime::Anime;
 
 pub fn reset_info() -> anyhow::Result<()> {
     for mut anime in Anime::iter_all() {

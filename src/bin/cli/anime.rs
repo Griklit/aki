@@ -1,4 +1,4 @@
-use aki::anime_command;
+use aki::anime::command as anime_command;
 use anyhow::Ok;
 use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;

@@ -1,5 +1,5 @@
-use crate::Namespace;
 use crate::CONFIG;
+use crate::Namespace;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 

@@ -95,10 +95,7 @@ impl Endpoint for AppDetailsEndpoint {
 /// 返回 `(解析后的条目, 要落盘的文本)`。落盘文本就是**响应原文**——一个字节都
 /// 不改，外壳、字段顺序、缩进都留着；离线重跑解析时走同一个
 /// [`extract_app_details`]，两种形状都认。
-fn extract_checked(
-    body: &str,
-    appid: u32,
-) -> Result<(AppDetails, String), SteamRequestError> {
+fn extract_checked(body: &str, appid: u32) -> Result<(AppDetails, String), SteamRequestError> {
     let data = extract_app_details(body, appid)?;
     let app: AppDetails =
         serde_json::from_value(data).map_err(|source| SteamRequestError::Parse {
@@ -123,14 +120,14 @@ fn extract_checked(
 ///
 /// # Errors
 /// 两种形状都不是合法 JSON，或请求的 appid 不存在（下架/锁区）时返回错误。
-fn extract_app_details(
-    body: &str,
-    appid: u32,
-) -> Result<serde_json::Value, SteamRequestError> {
+fn extract_app_details(body: &str, appid: u32) -> Result<serde_json::Value, SteamRequestError> {
     // 先判断是不是老式外壳：外壳的标志是顶层有数字 appid 作为键。
     let is_envelope = serde_json::from_str::<BTreeMap<String, serde_json::Value>>(body)
         .ok()
-        .is_some_and(|map| map.keys().any(|key| key.chars().all(|c| c.is_ascii_digit())));
+        .is_some_and(|map| {
+            map.keys()
+                .any(|key| key.chars().all(|c| c.is_ascii_digit()))
+        });
     if !is_envelope {
         return serde_json::from_str(body).map_err(|source| SteamRequestError::Parse {
             source,
@@ -191,7 +188,14 @@ impl Endpoint for OwnedGamesEndpoint {
 
     /// 没配置 `SteamID` 就直接报错，而不是带空 `steamid` 去请求。
     fn validate(&self) -> Result<(), SteamRequestError> {
-        if CONFIG.game.steam.steam_id.as_deref().unwrap_or_default().is_empty() {
+        if CONFIG
+            .game
+            .steam
+            .steam_id
+            .as_deref()
+            .unwrap_or_default()
+            .is_empty()
+        {
             return Err(SteamRequestError::MissingConfig {
                 name: "game.steam.steam_id",
             });
@@ -391,7 +395,9 @@ mod tests {
     #[test]
     fn malformed_body_is_parse_error() {
         let endpoint = AppDetailsEndpoint::new(570);
-        let err = endpoint.parse(r#"{"name":"no appid"}"#).expect_err("parse error");
+        let err = endpoint
+            .parse(r#"{"name":"no appid"}"#)
+            .expect_err("parse error");
         assert!(matches!(err, SteamRequestError::Parse { .. }));
     }
 

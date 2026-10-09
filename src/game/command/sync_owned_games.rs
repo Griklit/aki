@@ -1,14 +1,14 @@
 //! `sync-owned-games`：把 Steam「已拥有游戏」拉下来，落原始响应，
 //! 再据此补全/建立游戏条目。
 
-use super::super::steam;
-use super::super::state::{fill_from_steam, minutes_to_seconds};
 use super::super::Game;
-use crate::steam::{
+use super::super::state::{fill_from_steam, minutes_to_seconds};
+use super::super::steam;
+use crate::Namespace;
+use crate::source::steam::{
     OwnedGame, OwnedGamesEndpoint, SteamNamespace, SteamRawStore, SteamRequestError,
     request_with_raw,
 };
-use crate::Namespace;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -195,7 +195,8 @@ async fn create_game(client: &reqwest::Client, owned: &OwnedGame) -> SyncRecord 
             record.error = Some(e.to_string());
             return record;
         }
-    };    record.filled = fill_from_steam(
+    };
+    record.filled = fill_from_steam(
         &mut game.state,
         owned.playtime_forever,
         owned.last_played_at(),
@@ -333,7 +334,10 @@ mod tests {
         assert_eq!(filled, vec!["played_seconds", "last_played_at"]);
         // 手填的起玩日期没被碰过
         assert_eq!(game.state.play_start_date(), hand_start);
-        assert_eq!(game.state.play_status(), crate::game::GamePlayStatus::Playing);
+        assert_eq!(
+            game.state.play_status(),
+            crate::game::GamePlayStatus::Playing
+        );
     }
 
     /// appdetails 的真实响应片段（appid=570）：裸条目。
