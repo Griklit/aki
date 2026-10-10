@@ -1,9 +1,10 @@
+use std::collections::BTreeMap;
 use std::io;
 use std::path::PathBuf;
 
-use super::super::{Anime, SaveAnimeError, index::AnimeIndex};
-use crate::MetaId;
+use super::super::{Anime, AnimeInfoInternationalization, SaveAnimeError, index::AnimeIndex};
 use crate::source::bangumi::Subject;
+use crate::{Language, MetaId};
 
 #[derive(Debug, thiserror::Error)]
 pub enum UpdateWithBangumiError {
@@ -103,18 +104,60 @@ fn load_indexed(bangumi_id: i64, meta_id: &str) -> Option<Anime> {
 
 /// 用 Bangumi 的最新条目刷新 `anime` 中由 Bangumi 提供的部分。
 ///
-/// - `meta.id`、`meta.data.title`、`info` 与 `bangumi_id` 取自最新条目；
-/// - `i18n` 按语言合并：Bangumi 能提供的语言整体覆盖，其余语言保留；
+/// - `meta.id`、`info` 与 `bangumi_id` 取自最新条目；
+/// - `meta.data.title` 只在最新条目给出了**非空** `name_cn` 时才覆盖（接口对没有中文名
+///   的条目的 `name_cn` 是空串，`From<Subject>` 会把它变成 `Some("")`）；
+/// - `i18n` 见 [`merge_internationalizations`]，逐语言、逐字段合并；
 /// - 由用户填写的 `state` 与记录创建时间 `meta.data.create_time` 保持不变。
 fn refresh_with_subject(anime: &mut Anime, subject: Subject) {
     let fresh: Anime = subject.into();
     anime.meta.id = fresh.meta.id;
-    anime.meta.data.title = fresh.meta.data.title;
+    if let Some(title) = fresh.meta.data.title.filter(|title| !title.is_empty()) {
+        anime.meta.data.title = Some(title);
+    }
     anime.info = fresh.info;
-    anime
-        .internationalizations
-        .extend(fresh.internationalizations);
+    merge_internationalizations(
+        &mut anime.internationalizations,
+        fresh.internationalizations,
+    );
     anime.bangumi_id = fresh.bangumi_id;
+}
+
+/// 把最新条目的 `i18n` 合并进已有数据，**逐语言**并**逐字段**（`title` / `summary`）判断。
+///
+/// `From<Subject>` 给出的每个语言条目只带它那一门语言真正有的东西，另一个字段是 `None`
+/// （例如原名是日文、简介是中文时，日文条目只有 `title`，中文条目只有 `summary`），
+/// 所以整条替换会把 Bangumi 这次没提到的字段一起抹掉。按字段合并的规则是：
+///
+/// | 最新条目在这一门语言给的字段 | 处理 |
+/// |------------------------------|------|
+/// | 非空值 | 覆盖，标题与简介以最新条目为准 |
+/// | `None` 或空串 | 保留原值——它可能是用户自己补的翻译，不能因为这次没给就清掉 |
+///
+/// 因此：用户自备的语言（如英文）不会被碰；两个字段都是空的「空壳语言」不会被新建；
+/// 已有的语言条目也不会因为这次没数据而被删掉。
+fn merge_internationalizations(
+    existing: &mut BTreeMap<Language, AnimeInfoInternationalization>,
+    fresh: BTreeMap<Language, AnimeInfoInternationalization>,
+) {
+    for (language, fresh) in fresh {
+        // 接口对「没有这个语言的标题」给的是空串（没有中文名的条目 `name_cn` 就是 `""`），
+        // 空串按「没给」处理，否则会把已有的中文标题写成空字符串。
+        let title = fresh.title.filter(|title| !title.is_empty());
+        let summary = fresh.summary.filter(|summary| !summary.is_empty());
+        if title.is_none() && summary.is_none() {
+            continue;
+        }
+        let entry = existing
+            .entry(language)
+            .or_insert_with(|| AnimeInfoInternationalization::new(None, None));
+        if title.is_some() {
+            entry.title = title;
+        }
+        if summary.is_some() {
+            entry.summary = summary;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -127,6 +170,16 @@ mod tests {
 
     fn subject_example() -> Subject {
         serde_json::from_str(include_str!("../../source/bangumi/subject-example.json")).unwrap()
+    }
+
+    /// 拿样本条目改出 `name` / `name_cn` / `summary` 三件套，用来验证语言检测与合并。
+    fn subject_with(name: &str, name_cn: &str, summary: &str) -> Subject {
+        let mut value: serde_json::Value =
+            serde_json::from_str(include_str!("../../source/bangumi/subject-example.json")).unwrap();
+        value["name"] = serde_json::Value::String(name.to_string());
+        value["name_cn"] = serde_json::Value::String(name_cn.to_string());
+        value["summary"] = serde_json::Value::String(summary.to_string());
+        serde_json::from_value(value).unwrap()
     }
 
     fn outdated_anime(bangumi_id: i64) -> Anime {
@@ -207,6 +260,90 @@ mod tests {
                 .get(&Language::EnUs)
                 .and_then(|i| i.title.as_deref()),
             Some("Old Title")
+        );
+    }
+
+    fn i18n(anime: &Anime, language: Language) -> (Option<&str>, Option<&str>) {
+        anime
+            .internationalizations
+            .get(&language)
+            .map_or((None, None), |entry| {
+                (entry.title.as_deref(), entry.summary.as_deref())
+            })
+    }
+
+    /// 原名是日文、简介也是日文时，最新条目只给中文标题（`name_cn`），
+    /// 中文简介是用户自己写的——按字段合并必须更新标题、**留下**简介。
+    #[test]
+    fn i18n_merge_only_touches_the_fields_bangumi_provides() {
+        let subject = subject_with(
+            "〈物語〉シリーズ オフ&モンスターシーズン",
+            "物语系列 外传季&怪物季",
+            "西尾維新のライトノベルを原作とするアニメ。",
+        );
+        let mut anime = outdated_anime(subject.id);
+        anime.internationalizations.insert(
+            Language::ZhCn,
+            AnimeInfoInternationalization::new(
+                Some("旧中文名".to_string()),
+                Some("我自己写的简介".to_string()),
+            ),
+        );
+
+        refresh_with_subject(&mut anime, subject.clone());
+
+        assert_eq!(
+            i18n(&anime, Language::ZhCn),
+            (Some(subject.name_cn.as_str()), Some("我自己写的简介")),
+            "标题来自最新条目，简介不能被 Bangumi 这次的 None 抹掉"
+        );
+        assert_eq!(
+            i18n(&anime, Language::JaJp),
+            (
+                Some(subject.name.as_str()),
+                Some(subject.summary.as_str())
+            ),
+            "日文条目里 Bangumi 这次给的两个字段都该覆盖"
+        );
+    }
+
+    /// 没有中文名的条目 `name_cn` 是空串，不能把已有的中文标题写成空。
+    #[test]
+    fn i18n_merge_treats_empty_strings_as_absent() {
+        let subject = subject_with("〈物語〉シリーズ", "", "西尾維新のライトノベル。");
+        let mut anime = outdated_anime(subject.id);
+        anime.internationalizations.insert(
+            Language::ZhCn,
+            AnimeInfoInternationalization::new(
+                Some("旧中文名".to_string()),
+                Some("我自己写的简介".to_string()),
+            ),
+        );
+        let meta_title_before = anime.meta.data.title.clone();
+
+        refresh_with_subject(&mut anime, subject);
+
+        assert_eq!(
+            i18n(&anime, Language::ZhCn),
+            (Some("旧中文名"), Some("我自己写的简介"))
+        );
+        // `meta.data.title` 也来自 `name_cn`，空串同样不该覆盖。
+        assert_eq!(anime.meta.data.title, meta_title_before);
+    }
+
+    /// 空壳语言不新建：Bangumi 只给了日文时，不该凭空多出一个空的中文条目。
+    #[test]
+    fn i18n_merge_does_not_create_empty_entries() {
+        let subject = subject_with("〈物語〉シリーズ", "", "西尾維新のライトノベル。");
+        let mut anime = outdated_anime(subject.id);
+        anime.internationalizations.clear();
+
+        refresh_with_subject(&mut anime, subject);
+
+        assert!(anime.internationalizations.contains_key(&Language::JaJp));
+        assert!(
+            !anime.internationalizations.contains_key(&Language::ZhCn),
+            "两个字段都是空的语言不该留下条目"
         );
     }
 }
