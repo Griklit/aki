@@ -162,7 +162,7 @@ mod tests {
         let _busy = WORK_DIR
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let _work_dir = WorkDir::switch_to(Path::new(env!("CARGO_MANIFEST_DIR")).join("database"));
+        let _work_dir = WorkDir::switch_to(Path::new(env!("CARGO_MANIFEST_DIR")).join("aki-data"));
         let config = Config::load_with_current_dir().unwrap();
         dbg!(&config);
         // 路径不再挂在 `Config` 上，由各命名空间从 `root` 自己算。
@@ -194,7 +194,7 @@ mod tests {
         let _busy = WORK_DIR
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let _work_dir = WorkDir::switch_to(Path::new(env!("CARGO_MANIFEST_DIR")).join("database"));
+        let _work_dir = WorkDir::switch_to(Path::new(env!("CARGO_MANIFEST_DIR")).join("aki-data"));
         dbg!(&*CONFIG);
     }
 }
