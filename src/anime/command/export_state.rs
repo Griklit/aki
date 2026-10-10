@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, params};
 
-use super::super::{Anime, AnimeNamespace};
+use super::super::Anime;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ExportStateError {
@@ -41,15 +41,15 @@ INSERT INTO anime_state (
     positive, negative, recommendation, comment, watch_start_date, watch_finish_date
 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)";
 
-/// 把全部番剧的 `state` 导出到 SQLite，返回（实际写入的文件, 行数）。
+/// 把全部番剧的 `state` 导出到 `output` 指定的 SQLite 文件，返回（写入的文件, 行数）。
 ///
-/// `output` 为 `None` 时写到 [`AnimeNamespace::state_db_path()`]。
+/// `output` 是必填的，不给默认位置——导出到哪由调用方明确决定。
 /// 每次运行都会重建 `anime_state` 表（`DROP TABLE IF EXISTS` + `CREATE`），
 /// 因此结果始终是当前状态的完整快照；库里其他表不受影响。
 ///
 /// 分数按原样导出，不做范围裁剪——数据超出了字段约定的 0~1 也能看出来。
-pub fn export_state(output: Option<&Path>) -> Result<(PathBuf, usize), ExportStateError> {
-    let path = output.map_or_else(AnimeNamespace::state_db_path, Path::to_path_buf);
+pub fn export_state(output: &Path) -> Result<(PathBuf, usize), ExportStateError> {
+    let path = output.to_path_buf();
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(ExportStateError::CreateDir)?;
     }

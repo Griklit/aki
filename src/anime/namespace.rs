@@ -27,10 +27,4 @@ impl AnimeNamespace {
     pub fn index_path() -> PathBuf {
         Self::data_path().join(".aki/fjall-index")
     }
-
-    /// `export-state` / `import-state` 默认用的 `SQLite` 文件：`{root}/anime-state`。
-    #[must_use]
-    pub fn state_db_path() -> PathBuf {
-        Self::root_path().join("anime-state.db")
-    }
 }

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use rusqlite::Connection;
 
-use super::super::{Anime, AnimeNamespace, AnimeScore, AnimeState, AnimeWatchStatus};
+use super::super::{Anime, AnimeScore, AnimeState, AnimeWatchStatus};
 
 /// 校验失败时最多在错误里列出多少行，避免刷屏。
 const MAX_REPORTED_ISSUES: usize = 10;
@@ -56,19 +56,16 @@ SELECT meta_id, watch_status, episodes_watched, positive, negative,
        recommendation, comment, watch_start_date, watch_finish_date
 FROM anime_state";
 
-/// 从数据库读回 `state` 并更新对应的番剧数据文件。
+/// 从 `input` 指定的数据库读回 `state` 并更新对应的番剧数据文件。
 ///
-/// `input` 为 `None` 时读 [`AnimeNamespace::state_db_path()`]。
+/// `input` 是必填的，不给默认位置——从哪读由调用方明确决定。
 /// 只改 `state`，`info` / `i18n` / `meta` / `bangumi_id` 一律不碰；`state`
 /// 与文件里完全一致的条目会被跳过，不会白写一遍文件。
 ///
 /// 所有行先校验、再落盘：只要有一行不合法就整体不写，不会留下改了一半的数据。
 /// `dry_run` 为 `true` 时只报告会改哪些，不写任何文件。
-pub fn import_state(
-    input: Option<&Path>,
-    dry_run: bool,
-) -> Result<ImportStateResult, ImportStateError> {
-    let path = input.map_or_else(AnimeNamespace::state_db_path, Path::to_path_buf);
+pub fn import_state(input: &Path, dry_run: bool) -> Result<ImportStateResult, ImportStateError> {
+    let path = input.to_path_buf();
     if !path.exists() {
         return Err(ImportStateError::NotFound(path));
     }

@@ -29,16 +29,16 @@ pub struct Search {
 
 #[derive(Args)]
 pub struct ExportState {
-    /// 输出的 SQLite 文件（默认 {root}/anime-state.db，anime_state 表每次重建）。
+    /// 输出的 SQLite 文件（必填，anime_state 表每次重建）。
     #[arg(short, long)]
-    output: Option<PathBuf>,
+    output: PathBuf,
 }
 
 #[derive(Args)]
 pub struct ImportState {
-    /// 读取的 SQLite 文件（默认 {root}/anime-state.db）。
+    /// 读取的 SQLite 文件（必填）。
     #[arg(short, long)]
-    input: Option<PathBuf>,
+    input: PathBuf,
     /// 只显示将要发生的变化，不写入。
     #[arg(long)]
     dry_run: bool,
@@ -97,7 +97,7 @@ impl AnimeSubCommands {
                 ))
             }
             Self::ExportState(args) => {
-                let (path, count) = anime_command::export_state(args.output.as_deref())?;
+                let (path, count) = anime_command::export_state(&args.output)?;
                 Ok(Some(format!(
                     "exported {} anime states to {}",
                     count,
@@ -105,7 +105,7 @@ impl AnimeSubCommands {
                 )))
             }
             Self::ImportState(args) => {
-                let result = anime_command::import_state(args.input.as_deref(), args.dry_run)?;
+                let result = anime_command::import_state(&args.input, args.dry_run)?;
                 let mut lines = vec![format!(
                     "{} {} anime states ({} unchanged)",
                     if args.dry_run {

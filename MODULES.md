@@ -134,7 +134,7 @@ aki/
 
 | 命名空间 | 目录 | 域内附加路径 |
 |----------|------|--------------|
-| [`AnimeNamespace`](src/anime/namespace.rs) | `root/{anime.path}` | `index_path()` = `{data}/.aki/fjall-index`；`state_db_path()` = `root/anime-state.db` |
+| [`AnimeNamespace`](src/anime/namespace.rs) | `root/{anime.path}` | `index_path()` = `{data}/.aki/fjall-index` |
 | [`GameNamespace`](src/game/namespace.rs) | `root/{game.path}` | — |
 | [`BangumiNamespace`](src/source/bangumi/namespace.rs) | `root/{bangumi.path}`（默认 `source/bangumi`） | `subject_path(id)` = `{data}/subject/{id}.json` |
 | [`SteamNamespace`](src/source/steam/namespace.rs) | `root/{steam.path}`（默认 `source/steam`） | `saved_path("appdetails/{appid}")` |
@@ -423,11 +423,11 @@ pub struct BuildResult {
 **功能**: 把全部番剧的 `state`（用户手填的观看状态、评分、评论、日期）导出成一个 SQLite 文件，供 SQL 查询或其他工具消费；也可以反过来从该文件读回并更新数据文件。
 
 ```rust
-pub fn export_state(output: Option<&Path>) -> Result<(PathBuf, usize), ExportStateError>
-pub fn import_state(input: Option<&Path>, dry_run: bool) -> Result<ImportStateResult, ImportStateError>
+pub fn export_state(output: &Path) -> Result<(PathBuf, usize), ExportStateError>
+pub fn import_state(input: &Path, dry_run: bool) -> Result<ImportStateResult, ImportStateError>
 ```
 
-- 默认输出/读取 [`AnimeNamespace::state_db_path()`](src/anime/namespace.rs)（即 `{root}/anime-state.db`），可用 `--output` / `--input` 覆盖
+- 输出/输入路径**必填**，没有默认位置（曾经有过 `AnimeNamespace::state_db_path()` 提供的 `{root}/anime-state.db` 默认值，已连同该方法一起删除）：导出/导入到哪个文件由调用方明确给出，对应 `--output` / `--input`
 - 每次导出都 **`DROP TABLE IF EXISTS anime_state` + 重建**，结果始终是当前状态的完整快照；同一个库里其他表不受影响
 - 全部插入包在一个事务里，并写 `PRAGMA user_version = 1` 便于以后改结构
 - `meta.id` 是主键。理论上不会重复（文件名就是 sanitize 过的 `meta.id`），万一重复则保留最后一个并打印警告，而不是悄悄少导一条
@@ -768,7 +768,7 @@ trait 只说三件事：**是哪个命名空间**、**数据根目录在哪**、
 
 | 命名空间 | 固有方法 |
 |----------|----------|
-| `AnimeNamespace` | `index_path()`（`{data}/.aki/fjall-index`）、`state_db_path()`（`{root}/anime-state.db`） |
+| `AnimeNamespace` | `index_path()`（`{data}/.aki/fjall-index`） |
 | `BangumiNamespace` | `subject_path(id)` = `{data}/subject/{id}.json`、`subject_dir()` |
 | `SteamNamespace` | `saved_path(name)` = `{data}/{name}.json` |
 
@@ -918,8 +918,8 @@ aki-cli
 │   ├── update-with-bangumi <bangumi_id>
 │   ├── build-index
 │   ├── search <query> [-l <limit>]
-│   ├── export-state [-o <path>]
-│   ├── import-state [-i <path>] [--dry-run]
+│   ├── export-state -o <path>
+│   ├── import-state -i <path> [--dry-run]
 │   └── verify
 └── game (alias: g)
     ├── add-with-steam <appid>
@@ -938,16 +938,15 @@ aki-cli anime add-with-bangumi 475354
 aki-cli anime update-with-bangumi 475354
 aki-cli anime build-index                    # 重建 .aki/fjall-index/ 里的 bangumi-id 索引
 aki-cli anime search 物语 -l 5               # 按标题直接匹配，不需要先 build-index
-aki-cli anime export-state                  # 写到 database/anime-state.db
-aki-cli anime export-state -o /tmp/state.db # 或指定路径
-aki-cli anime import-state --dry-run        # 先看会改哪些
-aki-cli anime import-state                  # 真写回数据文件
+aki-cli anime export-state -o /tmp/state.db  # 导出到指定文件（-o/--output 必填）
+aki-cli anime import-state -i /tmp/state.db --dry-run  # 先看会改哪些（-i/--input 必填）
+aki-cli anime import-state -i /tmp/state.db  # 真写回数据文件
 aki-cli game add-with-steam 570             # 拉取 Dota 2 并存原始响应
 aki-cli game sync-owned-games --no-create   # 只把「已拥有游戏」里为空的时长/最后游玩补上
 aki-cli game sync-owned-games --all         # 顺便给缺失的游戏建条目，并逐条打印
 # 或
 aki-cli a add-with-bangumi 475354
-aki-cli a export-state
+aki-cli a export-state -o /tmp/state.db
 aki-cli g add-with-steam 570
 aki-cli g sync-owned-games
 ```
