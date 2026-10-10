@@ -133,10 +133,8 @@ struct I18nTitle {
 }
 
 impl TitleRecord {
-    /// 原标题 + 各语言翻译标题。
     fn titles(&self) -> impl Iterator<Item = &str> {
-        std::iter::once(self.info.title.as_str())
-            .chain(self.i18n.values().filter_map(|i18n| i18n.title.as_deref()))
+        self.i18n.values().filter_map(|i18n| i18n.title.as_deref())
     }
 }
 
