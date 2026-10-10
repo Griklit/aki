@@ -59,13 +59,15 @@ impl SortArg {
 pub struct SearchSubject {
     /// 检索关键词
     keyword: Option<String>,
-    /// 返回条数上限（接口最多返回 20 条，给更大的值也只拿到 20 条）
+    /// 返回条数上限
+    ///
+    ///（接口最多返回 20 条，给更大的值也只拿到 20 条）
     #[arg(short, long, default_value_t = bangumi_command::DEFAULT_LIMIT)]
     limit: u32,
-    /// 跳过前多少条（分页）
+    /// 跳过前多少条
     #[arg(long, default_value_t = 0)]
     offset: u32,
-    /// 排序规则（默认 match；给了 --season 时默认 rank，且按排名排序会排除未上榜条目）
+    /// 排序规则（默认 match）
     #[arg(short, long, value_enum)]
     sort: Option<SortArg>,
     /// 只要这些条目类型，可重复给出（多值之间是「或」）
@@ -87,7 +89,9 @@ pub struct SearchSubject {
     /// 这时改用 -s heat 或 -s score
     #[arg(long, num_args = 0..=1, default_missing_value = "current", value_name = "SEASON")]
     season: Option<String>,
-    /// 只要 R18 条目（没权限的账号会被接口忽略这个选项）
+    /// 只要 R18 条目
+    ///
+    /// （没权限的账号会被接口忽略这个选项）
     #[arg(long)]
     nsfw: bool,
 }
