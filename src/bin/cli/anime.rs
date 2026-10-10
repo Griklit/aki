@@ -25,6 +25,9 @@ pub struct Search {
     /// 返回结果数量上限。
     #[arg(short, long, default_value = "16")]
     limit: usize,
+    /// 索引没匹配到时再扫一遍数据文件确认（索引可能落后于数据目录，会慢一些）。
+    #[arg(long)]
+    verify_index: bool,
 }
 
 #[derive(Args)]
@@ -87,7 +90,7 @@ impl AnimeSubCommands {
                 )))
             }
             Self::Search(args) => {
-                let animes = anime_command::search(&args.query, args.limit);
+                let animes = anime_command::search(&args.query, args.limit, args.verify_index);
                 Ok(Some(
                     animes
                         .into_iter()

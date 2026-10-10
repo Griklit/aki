@@ -400,7 +400,7 @@ pub struct BuildResult {
 ```
 
 - 键值都按 UTF-8 存（`meta.id` 原样、`bangumi_id` 用大端字节），取出即可读、不依赖 serde
-- 一条番剧有几个标题（**原名 + 各语言翻译**）就在 `title-to-meta-id` 里占几个键，见 [`Anime::all_titles`]；标题键统一小写、查询也小写化，因此大小写不敏感。空标题会被 `set_title_to_meta_id` 跳过——fjall 不接受空键
+- 一条番剧有几个标题（**原名 + 各语言翻译，已去重**）就在 `title-to-meta-id` 里占几个键，见 [`Anime::all_titles`]——同一部番的原名与某个译名一字不差时只算一个（否则同一把键会被写两次，`build-index` 报的标题数也虚高）；标题键统一小写、查询也小写化，因此大小写不敏感。空标题会被 `set_title_to_meta_id` 跳过——fjall 不接受空键
 - 打开数据库会**独占目录**，同一目录在同一进程里只应存在一个 `AnimeIndex` 实例，因此各命令都是用完即弃
 
 **写入时机**：`add-with-bangumi` 保存新番剧后、`update-with-bangumi` 遍历找到番剧后，以及更新导致 `meta.id` 重算后（都走 `set_anime_index_or_warn` + `flush_or_warn`）。
@@ -419,10 +419,12 @@ pub struct BuildResult {
 
 - 先扫 `title-to-meta-id` keyspace（约 1800 条键值对，一次全表扫描几十微秒），只对最终要返回的那几条去读数据文件
 - 索引目录不存在、打不开、或者标题表是空的（没跑过 `build-index`）时，退回扫数据目录；扫文件时只反序列化 `meta.id` 与标题（`TitleRecord`），不解析整个 `Anime`——完整反序列化在 debug 构建下要慢两个数量级
+- 索引可用但**一条都没匹配到**时，默认就到此为止（索引是权威的，不为此多扫一遍文件）。只有 `--verify-index` 打开 `verify_index` 参数时才再扫一遍数据文件确认：索引可能落后于数据目录（手工放过文件、或加了条目没重建索引），真扫到了就提示索引过期，并把文件结果返回
+- 走文件分支时按情况打印一行 `[?]`（见第十一节的日志点），`IndexLookup` 把「索引这一轮给了什么」分成四种：`Hits`（可能为空）、`Missing`（目录不存在）、`Empty`（标题表里没有标题）、`Unreadable`（打不开，`open_or_warn` 已经报过原因，不再重复）。`fallback_hint()` 是纯函数，只负责按这四种情况生成提示正文，打印交给 `search()`
 - 分档：完全相同（4.0）> 前缀（3.0）> 包含（2.0），同档内标题越短越靠前（`rank - 字数/1000`）；一条番剧取所有标题里的最高分，按分数降序截取 `limit` 条
 - 空查询直接返回空结果
 
-> 实测（621 条番剧 / 1808 个标题）：`search 物语` 走索引 debug 11~17 ms、release 60 ms（release 里进程启动占大头），索引目录 0.6 MB。之前「遍历 + 完整反序列化」的写法是 4.6 s。
+> 实测（624 条番剧 / 1240 个标题）：`search 物语` 走索引 debug 11~17 ms、release 60 ms（release 里进程启动占大头），索引目录 0.6 MB。之前「遍历 + 完整反序列化」的写法是 4.6 s。标题数从早期的 1808 降到 1240 是 [`Anime::all_titles`] 去重的结果——原来每部番的原名与它的某个语言译名常常一字不差（`name` == `name_cn`），同一个键被写了两次。
 
 
 ### 3.9 命令：export_state / import_state (`src/anime/command/`)
@@ -1015,7 +1017,7 @@ aki-cli
 │   ├── add-with-bangumi <bangumi_id>
 │   ├── update-with-bangumi <bangumi_id>
 │   ├── build-index
-│   ├── search <query> [-l <limit>]
+│   ├── search <query> [-l <limit>] [--verify-index]
 │   ├── export-state -o <path>
 │   ├── import-state -i <path> [--dry-run]
 │   └── verify
@@ -1029,7 +1031,7 @@ aki-cli
 
 **文件**:
 - [mod.rs](src/bin/cli/mod.rs) — CLI 入口，定义 `SubCommands::Anime` / `SubCommands::Game` / `SubCommands::Bangumi` 子命令
-- [anime.rs](src/bin/cli/anime.rs) — Anime 子命令，`AddWithBangumi` / `UpdateWithBangumi` 接收 Bangumi ID，创建 tokio runtime 调用对应的异步函数，成功后打印番剧标题；`BuildIndex` 重建 fjall 索引并打印写入的 bangumi-id 与标题键数量；`Search` 按标题匹配字符串（走 title 索引，没索引时自动退回扫文件）；`ExportState` / `ImportState` 与 SQLite 互导 `state`
+- [anime.rs](src/bin/cli/anime.rs) — Anime 子命令，`AddWithBangumi` / `UpdateWithBangumi` 接收 Bangumi ID，创建 tokio runtime 调用对应的异步函数，成功后打印番剧标题；`BuildIndex` 重建 fjall 索引并打印写入的 bangumi-id 与标题键数量；`Search` 按标题匹配字符串（走 title 索引，没索引时自动退回扫文件；`--verify-index` 让「索引里没匹配到」的查询再扫一遍文件，确认索引有没有落后于数据目录）；`ExportState` / `ImportState` 与 SQLite 互导 `state`
 - [game.rs](src/bin/cli/game.rs) — Game 子命令，`AddWithSteam` 接收 Steam appid，创建 tokio runtime 调用 `game_command::add_with_steam`，成功后打印游戏标题与时长/成就；`Verify` 尚未实现
 - [bangumi.rs](src/bin/cli/bangumi.rs) — Bangumi 子命令，目前只有 `SearchSubject`：关键词**可省**（省了就只用筛选条件，接口把空关键词当成「不按关键词匹配」，因此 `-t anime --air-date ">=2026-10-01" --air-date "<2027-01-01"` 就能列出某一季的新番），拼出 [`source::bangumi::command::SearchSubjects`](src/source/bangumi/command/search_subject.rs) 后调用 `search_subjects`，再把结果逐行打印成 `{bangumi-id:>7} - [{date:^10}][{type:^5}] {译名}（{原名}） - #{rank} {score}`（如 `   1988 - [2006-11-01][book ] 物语系列（〈物語〉シリーズ） - #117 8.5`）。条目 ID 右对齐到 7 位，日期与类型居中（分别占 10 / 5 位），名称由 [`Subject::localized_name()`](src/source/bangumi/subject.rs) 按系统语言取（中文环境用 `name_cn`，取不到或与原名相同则省掉括号），日期未定时写 `unknown`，排名 0 就是接口给的「未上榜」。`--type` 的取值经 CLI 自己的 clap `ValueEnum` 映射成接口要的数字。`--season` 是查季番的快捷方式：把 [`Season`](src/source/bangumi/season.rs) 解析成一组 `air_date` 条件（`>=本季首日` + `<下季首日`），没显式给 `-t` 时补上 `anime`、没显式给 `-s` 时改成 `rank`；按 `rank` 排序时还会加一条 `rank > 0`——接口把未上榜记成 0 且按升序排，不加这条的话排在前面的全是还没上榜的条目
 
@@ -1186,6 +1188,7 @@ aki-cli (clap 解析命令)
 | [src/bin/cli/mod.rs](src/bin/cli/mod.rs) | `[!]` | `{e:?}`（命令错误统一出口） |
 | [anime/mod.rs](src/anime/mod.rs)、[game/mod.rs](src/game/mod.rs) | `[?]` | `failed to load anime/game file` |
 | [anime/index/fjall.rs](src/anime/index/fjall.rs) | `[?]` | 索引打开/读取/写入/落盘失败 |
+| [anime/command/search.rs](src/anime/command/search.rs) | `[?]` | 索引不存在 / 标题表为空 / 索引没匹配到但文件扫到了（索引可能过期） |
 | [anime/command/export_state.rs](src/anime/command/export_state.rs) | `[?]` | `meta.id` 重复，只导出最后一个 |
 | [anime/command/import_state.rs](src/anime/command/import_state.rs) | `[?]` | 数据文件不在规范路径，已改名清理 |
 | [game/command/sync_owned_games.rs](src/game/command/sync_owned_games.rs) | `[?]` | 同一 appid 出现在两个文件 / 本地还没有 owned-games.json |

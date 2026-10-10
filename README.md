@@ -60,7 +60,7 @@ country = "cn"
 # 番剧（别名 a）
 aki-cli anime add-with-bangumi <bangumi_id>     # 按 Bangumi ID 添加
 aki-cli anime update-with-bangumi <bangumi_id>  # 重新拉取条目，刷新元信息
-aki-cli anime search <关键词> [-l <条数>]        # 按标题搜索（原名 + 各语言译名）
+aki-cli anime search <关键词> [-l <条数>] [--verify-index]  # 按标题搜索（原名 + 各语言译名）
 aki-cli anime export-state -o <路径>             # 导出观看状态到 SQLite（路径必填）
 aki-cli anime import-state -i <路径> [--dry-run] # 从该文件导回（路径必填）
 aki-cli anime build-index                        # 重建可删除、可重建的本地索引

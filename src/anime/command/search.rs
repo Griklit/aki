@@ -11,22 +11,85 @@ use crate::Namespace;
 /// 匹配，只对最终要返回的那几条去读数据文件。
 ///
 /// 索引不存在、打不开、或者里面还没有标题（没跑过 `build-index`）时退回扫数据
-/// 目录，这样 `search` 在没有索引时依然可用，只是慢一些。
+/// 目录，这样 `search` 在没有索引时依然可用，只是慢一些——这几种情况会打印一行
+/// `[?]` 说明为什么走了文件分支（打不开时 `open_or_warn` 已经报过原因，就不再重复）。
+///
+/// 索引可用但**一条都没匹配到**时，默认就到此为止（索引是权威的）。`verify_index`
+/// 为 `true` 时再扫一遍数据文件确认：索引可能落后于数据目录（手工放过文件、或加了
+/// 条目没重建索引），真扫到了就提示索引过期，并把这批文件结果返回。确认扫描要遍历
+/// 整个数据目录，所以只在显式要求时做（`aki-cli anime search --verify-index`）。
 #[must_use]
-pub fn search(query: &str, limit: usize) -> Vec<Anime> {
+pub fn search(query: &str, limit: usize, verify_index: bool) -> Vec<Anime> {
     let query = query.trim();
     if query.is_empty() {
         return Vec::new();
     }
-    // 索引目录还不存在时直接扫文件：既不为了读一次标题去建一个空数据库，
-    // 也不会把「没建索引」表现成「什么都没搜到」。
-    if AnimeNamespace::index_path().exists()
-        && let Some(index) = AnimeIndex::open_or_warn()
-        && let Some(hits) = search_index(&index, query, limit)
-    {
-        return hits;
+    match lookup_index(query, limit) {
+        // 索引里有命中：直接用。
+        IndexLookup::Hits(hits) if !hits.is_empty() => hits,
+        // 索引没匹配到，而又没要求确认：索引说了没有就是没有。
+        IndexLookup::Hits(_) if !verify_index => Vec::new(),
+        lookup => {
+            let scanned = search_files(query, limit);
+            let index_path = AnimeNamespace::index_path();
+            if let Some(hint) = fallback_hint(&lookup, scanned.len(), &index_path) {
+                eprintln!("[?] {hint}");
+            }
+            scanned
+        }
     }
-    search_files(query, limit)
+}
+
+/// 查一次索引的结果。
+enum IndexLookup {
+    /// 索引可用，返回命中的条目（可能是空的——索引里确实没有匹配的标题）。
+    Hits(Vec<Anime>),
+    /// 索引目录还不存在（没建过索引）。
+    Missing,
+    /// 索引存在，但标题表里一条标题都没有。
+    Empty,
+    /// 索引打不开（[`AnimeIndex::open_or_warn`] 已经打印过原因）。
+    Unreadable,
+}
+
+/// 查一次索引；用不了时说明是哪一种用不了，好让调用方决定提示什么。
+fn lookup_index(query: &str, limit: usize) -> IndexLookup {
+    if !AnimeNamespace::index_path().exists() {
+        return IndexLookup::Missing;
+    }
+    let Some(index) = AnimeIndex::open_or_warn() else {
+        return IndexLookup::Unreadable;
+    };
+    match search_index(&index, query, limit) {
+        Some(hits) => IndexLookup::Hits(hits),
+        None => IndexLookup::Empty,
+    }
+}
+
+/// 走文件分支时该给的提示（正文，打印由调用方负责）。
+///
+/// 只在「用户以为在查索引、其实没查到」的时候提示；索引真的没有这条数据、
+/// 或者索引打不开（原因已经打印过）时都不提示，免得刷屏。
+fn fallback_hint(lookup: &IndexLookup, scanned: usize, index_path: &Path) -> Option<String> {
+    match lookup {
+        IndexLookup::Missing => Some(format!(
+            "anime index '{}' not found, searching data files instead \
+             (run 'aki-cli anime build-index' to build it)",
+            index_path.display()
+        )),
+        IndexLookup::Empty => Some(format!(
+            "anime index '{}' has no title entry, searching data files instead \
+             (run 'aki-cli anime build-index' to rebuild it)",
+            index_path.display()
+        )),
+        // 索引没匹配到、而文件扫到了：说明索引落后于数据目录。
+        IndexLookup::Hits(hits) if hits.is_empty() && scanned > 0 => Some(format!(
+            "no hit in anime index '{}' but scanning data files found {scanned} anime, \
+             the index may be out of date (run 'aki-cli anime build-index' to rebuild it)",
+            index_path.display()
+        )),
+        IndexLookup::Hits(_) | IndexLookup::Unreadable => None,
+    }
 }
 
 /// 在索引的标题表上找候选，再读回这些番剧。
@@ -199,10 +262,35 @@ mod tests {
         assert_eq!(score_title("物语", ""), None);
     }
 
+    /// 提示只在「用户以为在查索引、其实没查到」时出现。
+    #[test]
+    fn fallback_hints_cover_the_interesting_cases() {
+        let index = Path::new("anime/.aki/fjall-index");
+
+        // 索引不存在：一定提示，并给出重建命令。
+        let hint = fallback_hint(&IndexLookup::Missing, 3, index).unwrap();
+        assert!(hint.contains("not found"), "{hint}");
+        assert!(hint.contains("build-index"), "{hint}");
+
+        // 索引在、但标题表是空的：也提示。
+        let hint = fallback_hint(&IndexLookup::Empty, 0, index).unwrap();
+        assert!(hint.contains("no title entry"), "{hint}");
+
+        // 索引没匹配到、文件扫到了：提示索引可能过期。
+        let hint = fallback_hint(&IndexLookup::Hits(Vec::new()), 2, index).unwrap();
+        assert!(hint.contains("found 2 anime"), "{hint}");
+        assert!(hint.contains("out of date"), "{hint}");
+
+        // 索引没匹配到、文件也没扫到：这是「真的没有」，不是索引的问题。
+        assert!(fallback_hint(&IndexLookup::Hits(Vec::new()), 0, index).is_none());
+        // 打不开时 open_or_warn 已经报过原因，不再重复。
+        assert!(fallback_hint(&IndexLookup::Unreadable, 0, index).is_none());
+    }
+
     #[test]
     #[ignore = "cannot panic: only prints the hits from the local database"]
     fn test_search() {
-        for anime in search("物语", 10) {
+        for anime in search("物语", 10, true) {
             dbg!(anime.to_string());
         }
     }

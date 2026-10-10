@@ -13,7 +13,7 @@ pub use score::AnimeScore;
 use serde::{Deserialize, Serialize};
 pub use state::{AnimeState, AnimeWatchStatus};
 use std::borrow::Cow;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fmt;
 use std::fs::File;
 use std::io;
@@ -82,18 +82,30 @@ impl Anime {
             .collect()
     }
 
-    /// 这条番剧的全部标题（原标题 + 各语言翻译标题）。
+    /// 这条番剧的全部标题（原标题 + 各语言翻译标题），**已去重**。
     ///
-    /// 索引与搜索都以它为「这条番剧有哪些标题」的唯一来源；空标题会被跳过
-    /// （索引键不能为空，空字符串也不值得拿去匹配）。
+    /// 索引与搜索都以它为「这条番剧有哪些标题」的唯一来源。去重是必要的：同一部番的
+    /// 原名与某个语言的译名常常一模一样（中文原创番、`name_cn` 与原名相同等），不去重
+    /// 的话同一个标题会被写两次索引，`build-index` 报出来的标题数也会虚高。
+    ///
+    /// 保留首次出现的顺序与写法（`BTreeMap` 按 [`Language`] 的声明顺序遍历），空标题
+    /// 会被跳过（索引键不能为空，空字符串也不值得拿去匹配）。
     pub fn all_titles(&self) -> impl Iterator<Item = &str> {
-        std::iter::once(self.info.title.as_str())
-            .chain(
-                self.internationalizations
-                    .values()
-                    .filter_map(|i| i.title.as_deref()),
-            )
-            .filter(|title| !title.trim().is_empty())
+        let mut seen = HashSet::new();
+        let mut titles = Vec::new();
+        for title in std::iter::once(self.info.title.as_str()).chain(
+            self.internationalizations
+                .values()
+                .filter_map(|i| i.title.as_deref()),
+        ) {
+            if title.trim().is_empty() {
+                continue;
+            }
+            if seen.insert(title) {
+                titles.push(title);
+            }
+        }
+        titles.into_iter()
     }
 
     pub fn load(path: impl AsRef<Path>) -> Result<Self, LoadAnimeError> {
@@ -260,6 +272,46 @@ impl From<Subject> for Anime {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 同名标题（原名 == 某语言译名）、空标题、跨语言重复都只算一个。
+    #[test]
+    fn all_titles_is_deduplicated() {
+        let anime = Anime::new(
+            Meta::with_id("[2020-01-01] 测试".to_string(), None),
+            AnimeInfo {
+                title: "原名".to_string(),
+                summary: None,
+                platform: None,
+                air_date: None,
+                season: None,
+                episodes: None,
+            },
+            BTreeMap::from([
+                // 与原名重复（中文原创番就是这样：`name` == `name_cn`）
+                (
+                    Language::ZhCn,
+                    AnimeInfoInternationalization::new(Some("原名".to_string()), None),
+                ),
+                // 空标题：跳过
+                (
+                    Language::JaJp,
+                    AnimeInfoInternationalization::new(Some("   ".to_string()), None),
+                ),
+                // 真正不同的译名
+                (
+                    Language::EnUs,
+                    AnimeInfoInternationalization::new(Some("Original Title".to_string()), None),
+                ),
+            ]),
+            AnimeState::default(),
+            None,
+        );
+
+        assert_eq!(
+            anime.all_titles().collect::<Vec<_>>(),
+            vec!["原名", "Original Title"]
+        );
+    }
 
     #[test]
     fn test_from_bangumi() {
