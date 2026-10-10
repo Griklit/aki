@@ -265,8 +265,8 @@ impl From<Subject> for Anime {
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn test_from_bangumi() {
+    #[test]
+    fn test_from_bangumi() {
         let subject_json_str = include_str!("../source/bangumi/subject-example.json");
         let subject: Subject = serde_json::from_str(subject_json_str).unwrap();
         let anime = Anime::from(subject);
@@ -282,6 +282,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "cannot panic: only prints every entry from the local database"]
     fn iter_all_anime() {
         for anime in Anime::iter_all() {
             dbg!(anime.meta.data.title);

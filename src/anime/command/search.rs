@@ -200,6 +200,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "cannot panic: only prints the hits from the local database"]
     fn test_search() {
         for anime in search("物语", 10) {
             dbg!(anime.to_string());

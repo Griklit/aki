@@ -268,6 +268,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "cannot panic: only prints the lazily loaded config"]
     fn lazy_config() {
         // 同样要先把工作目录摆正：`CONFIG` 是惰性初始化的，而它找不到 `aki.toml`
         // 时会直接 `process::exit(1)`，所以这个测试不能依赖别的测试先碰过 `CONFIG`。

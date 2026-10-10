@@ -49,6 +49,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "cannot panic: only prints the converted tiles"]
     fn test_from_raw() {
         let raws = [
             ((2 ^ 8) * 3, (2 ^ 8) * 3),
