@@ -107,7 +107,6 @@ fn load_anime(meta_id: &str) -> Option<Anime> {
 #[derive(serde::Deserialize)]
 struct TitleRecord {
     meta: MetaIdOnly,
-    info: InfoTitle,
     #[serde(default, rename = "i18n")]
     i18n: BTreeMap<String, I18nTitle>,
 }
@@ -120,11 +119,6 @@ struct MetaIdOnly {
 #[derive(serde::Deserialize)]
 struct MetaIdString {
     id: String,
-}
-
-#[derive(serde::Deserialize)]
-struct InfoTitle {
-    title: String,
 }
 
 #[derive(serde::Deserialize)]
