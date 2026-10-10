@@ -1,9 +1,35 @@
+//! 配置模块：`aki.toml` 的模型与加载。
+//!
+//! 一个领域/来源一段配置，各占一个文件，**全部平级**：
+//!
+//! | 文件 | 配置段 | 内容 |
+//! |------|--------|------|
+//! | [`anime`] | `[anime]` | 番剧数据目录、Bangumi 接口地址 |
+//! | [`game`] | `[game]` | 游戏数据目录 |
+//! | [`bangumi`] | `[bangumi]` | Bangumi 原始响应的落盘位置 |
+//! | [`steam`] | `[steam]` | Steam 接口配置与原始响应的落盘位置 |
+//!
+//! 这里只做两件事：把 `aki.toml` 读成 [`Config`]、给出全局单例 [`CONFIG`]。
+//! **路径解析不在这一层**——各 `Namespace` 用 [`Config::root`] 拼自己那段
+//! （见 [`crate::Namespace`]）。
+
+mod anime;
+mod bangumi;
+mod game;
+mod steam;
+
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
+pub use anime::ConfigAnime;
+pub use bangumi::ConfigBangumi;
+pub use game::ConfigGame;
+pub use steam::ConfigSteam;
+
+/// 全局配置单例，首次访问时加载。
 pub static CONFIG: LazyLock<Config> = LazyLock::new(|| {
     #[cfg(debug_assertions)]
     {
@@ -33,121 +59,22 @@ pub enum LoadConfigError {
     Io(#[source] io::Error),
 }
 
-fn default_bangimi_api() -> String {
-    "api.bgm.tv".to_string()
-}
-
-fn default_steam_api() -> String {
-    "https://api.steampowered.com".to_string()
-}
-
-fn default_steam_store_api() -> String {
-    "https://store.steampowered.com".to_string()
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ConfigAnime {
-    pub path: PathBuf,
-    #[serde(default = "default_bangimi_api")]
-    pub bangumi_api: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ConfigGame {
-    pub path: PathBuf,
-}
-
-/// Bangumi 原始数据的落盘位置。
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ConfigBangumi {
-    /// 相对于 [`Config::root`] 的目录，`Subject` 原始响应落在它的 `subject/` 下。
-    #[serde(default = "default_bangumi_path")]
-    pub path: PathBuf,
-}
-
-fn default_bangumi_path() -> PathBuf {
-    PathBuf::from("source/bangumi")
-}
-
-impl Default for ConfigBangumi {
-    fn default() -> Self {
-        Self {
-            path: default_bangumi_path(),
-        }
-    }
-}
-
-/// Steam 接口配置与原始数据的落盘位置。
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ConfigSteam {
-    /// 相对于 [`Config::root`] 的目录，原始响应就落在它下面。
-    #[serde(default = "default_steam_path")]
-    pub path: PathBuf,
-    /// Steam Web API 密钥。留空则不发送，需要密钥的接口会直接报错。
-    #[serde(default)]
-    pub api_key: String,
-    /// SteamID64，用于拉取「已拥有游戏」「最近游玩」等玩家数据。
-    #[serde(default)]
-    pub steam_id: Option<String>,
-    /// 商店接口的响应语言，如 `schinese`。
-    #[serde(default = "default_steam_language")]
-    pub language: String,
-    /// 商店接口的地区，决定价格与分区，如 `cn`。
-    #[serde(default = "default_steam_country")]
-    pub country: String,
-    #[serde(default = "default_steam_api")]
-    pub api: String,
-    #[serde(default = "default_steam_store_api")]
-    pub store_api: String,
-}
-
-fn default_steam_path() -> PathBuf {
-    PathBuf::from("source/steam")
-}
-
-fn default_steam_language() -> String {
-    "schinese".to_string()
-}
-
-fn default_steam_country() -> String {
-    "cn".to_string()
-}
-
-impl Default for ConfigSteam {
-    fn default() -> Self {
-        Self {
-            path: default_steam_path(),
-            api_key: String::new(),
-            steam_id: None,
-            language: default_steam_language(),
-            country: default_steam_country(),
-            api: default_steam_api(),
-            store_api: default_steam_store_api(),
-        }
-    }
-}
-
-/// 数据来源（Bangumi / Steam）的落盘位置与接口配置。
-///
-/// 这不是某个领域的子模块：`anime` 与 `game` 都只是这些来源的消费方。
-#[derive(Debug, Default, Serialize, Deserialize)]
-pub struct ConfigSource {
-    #[serde(default)]
-    pub bangumi: ConfigBangumi,
-    #[serde(default)]
-    pub steam: ConfigSteam,
-}
-
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
+    /// 配置文件所在目录（即 `database/`），所有相对路径都相对它解析。
     #[serde(default, skip)]
     pub root: PathBuf,
+    /// 系统语言环境，加载时自动检测。
     #[serde(default, skip)]
     pub locale: String,
     pub anime: ConfigAnime,
     pub game: ConfigGame,
+    /// 数据来源：Bangumi 原始响应（整段省略时用默认值）。
     #[serde(default)]
-    pub source: ConfigSource,
+    pub bangumi: ConfigBangumi,
+    /// 数据来源：Steam 接口与原始响应（整段省略时用默认值）。
+    #[serde(default)]
+    pub steam: ConfigSteam,
 }
 
 impl Config {

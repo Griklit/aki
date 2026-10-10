@@ -24,7 +24,7 @@ aki/
 │   │   └── [YYYY-MM-DD] 番名.json
 │   ├── game/               # 游戏 JSON 数据文件
 │   │   └── [日期] 游戏名.json
-│   └── source/             # 数据来源的原始响应（[source.*] path 可改）
+│   └── source/             # 数据来源的原始响应（`[bangumi]` / `[steam]` 的 `path` 可改）
 │       ├── bangumi/subject/{id}.json    # Bangumi 条目原文
 │       └── steam/                       # Steam 响应原文
 │           ├── appdetails/{appid}.json
@@ -93,26 +93,28 @@ aki/
 
 ---
 
-## 二、配置 (`src/config.rs`)
+## 二、配置 (`src/config/`)
 
-**文件**: [src/config.rs](src/config.rs)
+**文件**: [src/config/](src/config/)（`mod.rs` + 每个配置段一个文件）
 
 **功能**: 加载和管理应用配置。
 
 ### 核心结构
 
-- **`Config`** — 顶层配置
+- **`Config`** — 顶层配置（[config/mod.rs](src/config/mod.rs)）
   - `root: PathBuf` — 配置文件所在目录（即 `database/`）
   - `locale: String` — 系统语言环境（自动检测）
-  - `anime: ConfigAnime` — 番剧相关配置
-  - `game: ConfigGame` — 游戏相关配置
-- **`ConfigAnime`** — 番剧配置
+  - `anime: ConfigAnime` / `game: ConfigGame` — 两个领域的配置
+  - `bangumi: ConfigBangumi` / `steam: ConfigSteam` — 两个数据来源的配置（与领域**平级**）
+- **`ConfigAnime`**（[config/anime.rs](src/config/anime.rs)）
   - `path: PathBuf` — 番剧数据相对于 root 的路径
-  - `bangumi_api: String` — Bangumi API 地址（默认 `api.bgm.tv`）
-- **`ConfigGame`** — 游戏配置
+- **`ConfigGame`**（[config/game.rs](src/config/game.rs)）
   - `path: PathBuf` — 游戏数据相对于 root 的路径
-  - `steam: ConfigSteam` — Steam 接口配置
-- **`ConfigSteam`** — Steam 配置
+- **`ConfigBangumi`**（[config/bangumi.rs](src/config/bangumi.rs)）
+  - `path: PathBuf` — Bangumi 原始响应目录（默认 `source/bangumi`）
+  - `bangumi_api: String` — Bangumi API 地址（默认 `api.bgm.tv`），**从原来的 `[anime]` 移到这里**
+- **`ConfigSteam`**（[config/steam.rs](src/config/steam.rs)）
+  - `path: PathBuf` — 原始响应目录（默认 `source/steam`）
   - `api_key: String` — Web API 密钥，留空则只有商店接口可用
   - `steam_id: Option<String>` — SteamID64，拉玩家数据（已拥有游戏等）时需要
   - `language` / `country` — 商店接口的文案语言与价格分区（默认 `schinese` / `cn`）
@@ -134,8 +136,8 @@ aki/
 |----------|------|--------------|
 | [`AnimeNamespace`](src/anime/namespace.rs) | `root/{anime.path}` | `index_path()` = `{data}/.aki/fjall-index`；`state_db_path()` = `root/anime-state.db` |
 | [`GameNamespace`](src/game/namespace.rs) | `root/{game.path}` | — |
-| [`BangumiNamespace`](src/source/bangumi/namespace.rs) | `root/{source.bangumi.path}`（默认 `source/bangumi`） | `subject_path(id)` = `{data}/subject/{id}.json` |
-| [`SteamNamespace`](src/source/steam/namespace.rs) | `root/{source.steam.path}`（默认 `source/steam`） | `saved_path("appdetails/{appid}")` |
+| [`BangumiNamespace`](src/source/bangumi/namespace.rs) | `root/{bangumi.path}`（默认 `source/bangumi`） | `subject_path(id)` = `{data}/subject/{id}.json` |
+| [`SteamNamespace`](src/source/steam/namespace.rs) | `root/{steam.path}`（默认 `source/steam`） | `saved_path("appdetails/{appid}")` |
 
 ```rust
 impl Namespace for AnimeNamespace {
@@ -153,8 +155,8 @@ impl Namespace for AnimeNamespace {
 |----------|----------|------|
 | [`AnimeNamespace`](src/anime/namespace.rs) | `anime` | `{root}/{anime.path}` |
 | [`GameNamespace`](src/game/namespace.rs) | `game` | `{root}/{game.path}` |
-| [`BangumiNamespace`](src/source/bangumi/namespace.rs) | `bangumi` | `{root}/{source.bangumi.path}`（默认 `source/bangumi`） |
-| [`SteamNamespace`](src/source/steam/namespace.rs) | `steam` | `{root}/{source.steam.path}`（默认 `source/steam`） |
+| [`BangumiNamespace`](src/source/bangumi/namespace.rs) | `bangumi` | `{root}/{bangumi.path}`（默认 `source/bangumi`） |
+| [`SteamNamespace`](src/source/steam/namespace.rs) | `steam` | `{root}/{steam.path}`（默认 `source/steam`） |
 
 域内更细的路径也由各自的命名空间提供，例如 `BangumiNamespace::subject_path(id)` = `<data_path>/subject/<id>.json`。
 
@@ -163,17 +165,16 @@ impl Namespace for AnimeNamespace {
 ```toml
 [anime]
 path = "./anime"
-bangumi_api = "https://proxy.scalt.xyz/api.bgm.tv"
 
 [game]
 path = "./game"
 
-# 数据来源（Bangumi / Steam）的落盘位置与接口配置。
-# 这不是 game 的子模块：anime 与 game 都只是这些来源的消费方。
-[source.bangumi]
+# 数据来源：与 [anime] / [game] 平级，不是 game 的子模块。
+[bangumi]
 path = "./source/bangumi"
+bangumi_api = "https://proxy.scalt.xyz/api.bgm.tv"
 
-[source.steam]
+[steam]
 path = "./source/steam"
 api_key = "<Steam Web API key>"
 # steam_id = "7656119xxxxxxxxxx"
@@ -181,7 +182,15 @@ language = "schinese"
 country = "cn"
 ```
 
-`[source.*]` 两段都可以整段省略：`path` 默认就是 `source/bangumi` / `source/steam`，`ConfigSource` 有 `Default`。`steam` 的密钥/语言/地区以前挂在 `[game.steam]` 下，现在移到 `[source.steam]`——Steam 是数据来源，不是 `game` 的子模块。
+`[bangumi]` / `[steam]` 两段都可以整段省略（`ConfigBangumi` / `ConfigSteam` 都有 `Default`）：`path` 默认就是 `source/bangumi` / `source/steam`。Steam 的密钥/语言/地区以前挂在 `[game.steam]` 下，现在移到平级的 `[steam]`——Steam 是数据来源，不是 `game` 的子模块。配置分文件见下表：
+
+| 文件 | 配置段 |
+|------|--------|
+| [config/anime.rs](src/config/anime.rs) | `[anime]` |
+| [config/game.rs](src/config/game.rs) | `[game]` |
+| [config/bangumi.rs](src/config/bangumi.rs) | `[bangumi]` |
+| [config/steam.rs](src/config/steam.rs) | `[steam]` |
+| [config/mod.rs](src/config/mod.rs) | `Config`、`CONFIG`、`LoadConfigError` |
 
 ---
 
@@ -571,7 +580,7 @@ pub async fn sync_owned_games(client: &reqwest::Client, create_missing: bool)
 
 流程：
 
-1. 调 `IPlayerService/GetOwnedGames`（用配置里的 `source.steam.steam_id` + `source.steam.api_key`），整份响应原文写到 `database/source/steam/owned-games.json`
+1. 调 `IPlayerService/GetOwnedGames`（用配置里的 `steam.steam_id` + `steam.api_key`），整份响应原文写到 `database/source/steam/owned-games.json`
 2. 遍历数据目录，建 `steam_app_id → (meta.id, 文件路径)` 映射
 3. 对库里每个游戏：
    - **已有条目** → 只补 `played_seconds` / `last_played_at` 里为空的字段，真的改了才回写（`save_force`），没改不碰文件
@@ -630,7 +639,7 @@ pub async fn request<E: Endpoint>(client, endpoint: &E) -> Result<E::Response, S
 
 ### 3.6.3 原始响应落盘 (`src/source/steam/store.rs`)
 
-[`SteamNamespace`](src/source/steam/namespace.rs) 把 `[source.steam] path` 注册成一个命名空间，并给出存放名到文件的映射：`saved_path(name)` = `{data_path}/{name}.json`。
+[`SteamNamespace`](src/source/steam/namespace.rs) 把 `[steam] path` 注册成一个命名空间，并给出存放名到文件的映射：`saved_path(name)` = `{data_path}/{name}.json`。
 
 ```rust
 pub struct SteamRawStore<T> { pub url: String, pub raw: String, /* marker */ }
@@ -689,7 +698,7 @@ impl<T> SteamRawStore<T> {
 
 **文件**: [src/source/bangumi/namespace.rs](src/source/bangumi/namespace.rs)
 
-**功能**: 把 `[source.bangumi] path`（默认 `database/source/bangumi`）注册成命名空间 `"bangumi"`，并提供域内路径：`subject_path(id)` = `<data_path>/subject/<id>.json`、`subject_dir()`。`Subject::save` / `load_with_id` 只调它，不再直接用 `CONFIG` 拼路径。
+**功能**: 把 `[bangumi] path`（默认 `database/source/bangumi`）注册成命名空间 `"bangumi"`，并提供域内路径：`subject_path(id)` = `<data_path>/subject/<id>.json`、`subject_dir()`。`Subject::save` / `load_with_id` 只调它，不再直接用 `CONFIG` 拼路径。
 
 ---
 
@@ -1008,7 +1017,7 @@ aki-cli (clap 解析命令)
                   → database/game/[日期前缀] 游戏名.json
 ```
 
-所有落盘路径都只经过各命名空间提供的静态方法（`Namespace::data_path()` 定根目录、各命名空间的固有方法给文件名），因此 `meta` 模块与具体领域完全解耦；Bangumi / Steam 的原始响应各自多注册了一个命名空间，目录由 `[source.*] path` 决定。
+所有落盘路径都只经过各命名空间提供的静态方法（`Namespace::data_path()` 定根目录、各命名空间的固有方法给文件名），因此 `meta` 模块与具体领域完全解耦；Bangumi / Steam 的原始响应各自多注册了一个命名空间，目录由 `[bangumi]` / `[steam]` 的 `path` 决定。
 
 ## 十一、日志约定
 
@@ -1045,7 +1054,7 @@ aki-cli (clap 解析命令)
 | 情况 | 做法 |
 |------|------|
 | 命令失败（网络、IO、找不到数据） | 返回 `Err`，把包装错误交给上层；**不要**在这里打印 |
-| 进程起不来（配置读不到、工作目录切不过去） | `[x] ...` 然后 `std::process::exit(1)`，见 [config.rs](src/config.rs) 的 `CONFIG` |
+| 进程起不来（配置读不到、工作目录切不过去） | `[x] ...` 然后 `std::process::exit(1)`，见 [config/mod.rs](src/config/mod.rs) 的 `CONFIG` |
 | 命令错误最终出口 | 只在 [src/bin/cli/mod.rs](src/bin/cli/mod.rs) 打一次 `eprintln!("[!] {e:?}")` |
 | 跳过一条坏数据、继续处理其余 | `[?] ...` 并继续（如 `Anime::iter_all_with_path` 跳过读不动的 JSON） |
 | 可选操作失败但不影响用户数据 | `[?] ...` 并继续（如索引读写失败、多余文件清理失败） |
@@ -1060,7 +1069,7 @@ aki-cli (clap 解析命令)
 
 | 文件 | 级别 | 内容 |
 |------|------|------|
-| [config.rs](src/config.rs) | `[x]` | `enter 'database' failed` / `load config failed` |
+| [config/mod.rs](src/config/mod.rs) | `[x]` | `enter 'database' failed` / `load config failed` |
 | [src/bin/cli/mod.rs](src/bin/cli/mod.rs) | `[!]` | `{e:?}`（命令错误统一出口） |
 | [anime/mod.rs](src/anime/mod.rs)、[game/mod.rs](src/game/mod.rs) | `[?]` | `failed to load anime/game file` |
 | [anime/index/fjall.rs](src/anime/index/fjall.rs) | `[?]` | 索引打开/读取/写入/落盘失败 |

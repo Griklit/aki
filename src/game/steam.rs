@@ -98,7 +98,7 @@ pub async fn request_app_details(
     appid: u32,
 ) -> Result<AppDetailsRawStore, SteamRequestError> {
     let (raw, _app) = request_with_raw(client, &AppDetailsEndpoint::new(appid)).await?;
-    let steam_config = &crate::CONFIG.source.steam;
+    let steam_config = &crate::CONFIG.steam;
     let url = format!(
         "{}/api/appdetails?appids={}&l={}&cc={}",
         steam_config.store_api, appid, steam_config.language, steam_config.country

@@ -272,7 +272,7 @@ pub fn load_owned_games_raw() -> Result<Option<Vec<OwnedGame>>, SteamRequestErro
 }
 
 fn owned_games_url() -> String {
-    let steam = &crate::CONFIG.source.steam;
+    let steam = &crate::CONFIG.steam;
     format!(
         "{}/IPlayerService/GetOwnedGames/v1/?steamid={}",
         steam.api,

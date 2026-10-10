@@ -1,7 +1,7 @@
 use crate::{CONFIG, Namespace, utils};
 use std::path::PathBuf;
 
-/// Bangumi 原始数据的命名空间：`[source.bangumi] path`（默认 `database/source/bangumi`）。
+/// Bangumi 原始数据的命名空间：`[bangumi] path`（默认 `database/source/bangumi`）。
 ///
 /// 一条条目的原始响应落在 `<data_path>/subject/<id>.json`，与 Steam 存原始响应同理
 /// ——接口返回的 JSON 先原样存下来，解析逻辑改了就离线重跑，不用再打接口。
@@ -19,7 +19,7 @@ impl Namespace for BangumiNamespace {
 
     fn data_path() -> PathBuf {
         let config = &*CONFIG;
-        utils::path::normalize(config.root.join(&config.source.bangumi.path))
+        utils::path::normalize(config.root.join(&CONFIG.bangumi.path))
     }
 }
 

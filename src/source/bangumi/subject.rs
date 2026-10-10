@@ -184,7 +184,7 @@ impl Subject {
         let resp = client
             .get(format!(
                 "{}/v0/subjects/{}",
-                CONFIG.anime.bangumi_api, subject_id
+                CONFIG.bangumi.bangumi_api, subject_id
             ))
             .header(reqwest::header::USER_AGENT, "Griklit/aki")
             .send()
