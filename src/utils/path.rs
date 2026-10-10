@@ -36,8 +36,12 @@ pub fn normalize(path: impl AsRef<Path>) -> PathBuf {
 mod tests {
     use super::*;
 
+    /// [`normalize`] 返回的是平台原生路径（Windows 上是 `\` 分隔），而这里的断言
+    /// 写的是 POSIX 形式，所以先把分隔符统一再比。
     fn norm(input: &str) -> String {
-        normalize(input).to_string_lossy().to_string()
+        normalize(input)
+            .to_string_lossy()
+            .replace(std::path::MAIN_SEPARATOR, "/")
     }
 
     #[test]
@@ -93,6 +97,6 @@ mod tests {
         let p = normalize("C:\\a\\..\\b");
         let s = p.to_string_lossy();
         assert!(s.contains("C:"));
-        assert!(s.ends_with("b"));
+        assert!(s.ends_with('b'));
     }
 }

@@ -73,11 +73,10 @@ impl HeightExpandableMap<usize> {
                 print!(
                     "{}",
                     self.get(Position::new(x, y))
-                        .map(|v| to_chinese_character_ordered(*v))
-                        .unwrap_or('　')
+                        .map_or('　', |v| to_chinese_character_ordered(*v))
                 );
             }
-            print!("\n");
+            println!();
         }
     }
 }
