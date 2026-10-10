@@ -160,11 +160,7 @@ impl Anime {
                 match Self::load(&path) {
                     Ok(anime) => Some((path, anime)),
                     Err(e) => {
-                        eprintln!(
-                            "Warning: failed to load anime file '{}': {}",
-                            path.display(),
-                            e
-                        );
+                        eprintln!("[?] failed to load anime file '{}': {}", path.display(), e);
                         None
                     }
                 }

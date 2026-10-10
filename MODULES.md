@@ -9,6 +9,8 @@
 
 技术栈：Rust 2024 edition, tokio (async), reqwest (HTTP), serde/serde_json (序列化), clap (CLI), fjall (键值索引).
 
+诊断信息一律走 `stderr` 并带级别符号前缀（`[#] [+] [?] [!] [x]`），命令的正常结果走 `stdout` 不加前缀。完整规则见第十一节「日志约定」。
+
 ---
 
 ## 目录结构
@@ -961,7 +963,68 @@ aki-cli (clap 解析命令)
 
 两个领域的落盘路径都只经过 `Namespace` 提供的静态方法，因此 `meta` 模块与具体领域完全解耦；`steam` 原始响应只是多注册了一个 `SteamNamespace`。
 
-## 十一、依赖说明
+## 十一、日志约定
+
+**功能**: 统一所有诊断信息的格式，让终端输出一眼能分出「结果」和「噪音」。
+
+### 级别与符号
+
+| 符号 | 级别 | 什么时候用 | 现有例子 |
+|------|------|------------|----------|
+| `[#]` | debug | 只给开发看的中间结果，普通用户不需要 | `[#] parsed real response: [2020-08-14] Factorio`（`game/steam.rs` 测试） |
+| `[+]` | info | 正常但有话要说的进展 | 目前没有使用点，新加进展提示时用它 |
+| `[?]` | warn | 能继续，但结果可能不完整 | `[?] failed to open anime index '...': ...`、`[?] skip: ... not found` |
+| `[!]` | error | 这次操作失败，但程序还能正常收尾 | `[!] no anime found with bangumi id 999999999` |
+| `[x]` | fatal | 继续不下去，只能退出 | `[x] load config failed: config file 'aki.toml' not found in current directory` |
+
+### 格式规则
+
+1. **符号 + 一个空格 + 正文**：`eprintln!("[?] failed to load anime file '{}': {}", path.display(), e);`
+2. **正文小写开头**，句尾不加句号；专有名词（`fjall`、`SQLite`、`meta.id`）保持原样
+3. **只写一个前缀**：不要 `"Warning: [?] ..."`、不要 `"Error: ..."` —— 符号本身就表达级别
+4. **参数化，不拼字符串**：一律用 `{}` 占位符与 `eprintln!` 的参数列表，别先 `format!` 再打印
+5. **不换行**：一条日志一行。太长的多行 `eprintln!` 用 Rust 的 `\` 续行接字符串字面量
+6. **路径用 `{}` + `.display()`**：`PathBuf` 不能直接 `{}`（不可控编码），统一 `path.display()`
+7. **符号只出现在 `stderr`**：`stdout` 只放命令结果
+
+### 出口分工
+
+- **`stdout`**：命令的结果本身，由 `src/bin/cli/mod.rs` 统一 `println!("{}", s)` 输出，**不带任何符号**。
+- **`stderr`**：一切诊断信息。包括 `[x]` 致命错误、`[!]` 命令错误、`[?]` 警告、`[#]` 调试输出。
+- 目前没有引入 `log`/`tracing` 之类的日志框架：项目只有一个短命进程的 CLI，直接 `eprintln!` 最省事，也保证 `--help`／管道场景下不互相污染。
+
+### 写新代码时的取舍
+
+| 情况 | 做法 |
+|------|------|
+| 命令失败（网络、IO、找不到数据） | 返回 `Err`，把包装错误交给上层；**不要**在这里打印 |
+| 进程起不来（配置读不到、工作目录切不过去） | `[x] ...` 然后 `std::process::exit(1)`，见 [config.rs](src/config.rs) 的 `CONFIG` |
+| 命令错误最终出口 | 只在 [src/bin/cli/mod.rs](src/bin/cli/mod.rs) 打一次 `eprintln!("[!] {e:?}")` |
+| 跳过一条坏数据、继续处理其余 | `[?] ...` 并继续（如 `Anime::iter_all_with_path` 跳过读不动的 JSON） |
+| 可选操作失败但不影响用户数据 | `[?] ...` 并继续（如索引读写失败、多余文件清理失败） |
+| 会改动用户数据却失败了 | 必须返回 `Err`：宁可命令失败，也不能让用户以为成功了 |
+| 只是开发期观察的中间值 | `[#] ...`（测试里常见） |
+
+> 核心原则：**只在「错误不影响用户数据、或需要让用户知道被跳过了」时才降级成 `[?]` 并继续；其余一律返回错误。**
+
+### 现有日志点
+
+全部 `eprintln!` 都在下列文件（改动时保持格式一致）：
+
+| 文件 | 级别 | 内容 |
+|------|------|------|
+| [config.rs](src/config.rs) | `[x]` | `enter 'database' failed` / `load config failed` |
+| [src/bin/cli/mod.rs](src/bin/cli/mod.rs) | `[!]` | `{e:?}`（命令错误统一出口） |
+| [anime/mod.rs](src/anime/mod.rs)、[game/mod.rs](src/game/mod.rs) | `[?]` | `failed to load anime/game file` |
+| [anime/index/fjall.rs](src/anime/index/fjall.rs) | `[?]` | 索引打开/读取/写入/落盘失败 |
+| [anime/command/export_state.rs](src/anime/command/export_state.rs) | `[?]` | `meta.id` 重复，只导出最后一个 |
+| [anime/command/import_state.rs](src/anime/command/import_state.rs) | `[?]` | 数据文件不在规范路径，已改名清理 |
+| [game/command/sync_owned_games.rs](src/game/command/sync_owned_games.rs) | `[?]` | 同一 appid 出现在两个文件 / 本地还没有 owned-games.json |
+| [game/steam.rs](src/game/steam.rs) | `[?]`、`[#]` | 本地响应文件缺失时跳过 / 解析出的真实响应 |
+
+---
+
+## 十二、依赖说明
 
 | 依赖 | 用途 |
 |------|------|

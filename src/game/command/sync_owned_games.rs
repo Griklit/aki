@@ -140,7 +140,7 @@ fn existing_entries() -> BTreeMap<u32, (String, PathBuf)> {
         if let Some((previous, _)) = existing.insert(appid, (game.meta.id.id.clone(), path.clone()))
         {
             eprintln!(
-                "Warning: appid {appid} appears in two files, keeping '{}' and ignoring '{}'",
+                "[?] appid {appid} appears in two files, keeping '{}' and ignoring '{}'",
                 previous,
                 path.display()
             );
@@ -370,7 +370,7 @@ mod tests {
         // 同步过一次就应当能离线读回；没同步过则返回 None。
         match load_owned_games_raw() {
             Ok(Some(games)) => assert!(!games.is_empty()),
-            Ok(None) => eprintln!("skip: no owned-games.json yet"),
+            Ok(None) => eprintln!("[?] skip: no owned-games.json yet"),
             Err(e) => panic!("offline loader failed: {e}"),
         }
     }

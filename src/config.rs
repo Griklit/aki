@@ -9,13 +9,17 @@ use std::sync::OnceLock;
 pub static CONFIG: LazyLock<Config> = LazyLock::new(|| {
     #[cfg(debug_assertions)]
     {
-        std::env::set_current_dir("database").unwrap();
+        // 调试构建默认在 `database/` 下跑；切不过去直接按不可恢复错误退出。
+        if let Err(err) = std::env::set_current_dir("database") {
+            eprintln!("[x] enter 'database' failed: {err}");
+            std::process::exit(1);
+        }
     }
     let config = Config::load_with_current_dir();
     match config {
         Ok(config) => config,
         Err(err) => {
-            eprintln!("Load config failed: {err}");
+            eprintln!("[x] load config failed: {err}");
             std::process::exit(1);
         }
     }

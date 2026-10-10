@@ -159,11 +159,7 @@ impl Game {
                 match Self::load(&path) {
                     Ok(game) => Some((path, game)),
                     Err(e) => {
-                        eprintln!(
-                            "Warning: failed to load game file '{}': {}",
-                            path.display(),
-                            e
-                        );
+                        eprintln!("[?] failed to load game file '{}': {}", path.display(), e);
                         None
                     }
                 }

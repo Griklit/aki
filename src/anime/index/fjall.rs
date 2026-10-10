@@ -98,7 +98,7 @@ impl AnimeIndex {
         let value = match self.bangumi_id_to_meta_id.get(bangumi_id.to_be_bytes()) {
             Ok(value) => value?,
             Err(error) => {
-                eprintln!("Warning: failed to read anime index: {error}");
+                eprintln!("[?] failed to read anime index: {error}");
                 return None;
             }
         };

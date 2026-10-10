@@ -268,12 +268,12 @@ mod tests {
     fn parse_real_saved_factorio() {
         let path = app_details_path(427_520);
         let Ok(raw) = std::fs::read_to_string(&path) else {
-            eprintln!("skip: {} not found", path.display());
+            eprintln!("[?] skip: {} not found", path.display());
             return;
         };
         let game = app_details_to_game(&raw, 427_520).expect("real response should parse");
         assert_eq!(game.info.title, "Factorio");
         assert_eq!(game.steam_app_id, Some(427_520));
-        eprintln!("parsed real response: {}", game.meta.id.id);
+        eprintln!("[#] parsed real response: {}", game.meta.id.id);
     }
 }

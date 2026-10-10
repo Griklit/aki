@@ -255,7 +255,8 @@ fn write_anime_at(
     if loaded_path != target {
         fs::remove_file(loaded_path).map_err(ImportStateError::RemoveRenamed)?;
         eprintln!(
-            "Warning: '{}' was not at its canonical path, written to '{}' and the old file was removed",
+            "[?] '{}' was not at its canonical path, written to '{}' \
+             and the old file was removed",
             loaded_path.display(),
             target.display()
         );

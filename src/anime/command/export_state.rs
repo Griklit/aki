@@ -85,7 +85,8 @@ pub(super) fn write_state(
     }
     if rows.len() < total {
         eprintln!(
-            "Warning: {} anime entries share a meta.id with another file, only the last of each is exported",
+            "[?] {} anime entries share a meta.id with another file, \
+             only the last of each is exported",
             total - rows.len()
         );
     }
