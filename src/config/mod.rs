@@ -34,7 +34,7 @@ pub static CONFIG: LazyLock<Config> = LazyLock::new(|| {
     #[cfg(debug_assertions)]
     {
         // 调试构建默认在 `database/` 下跑；切不过去直接按不可恢复错误退出。
-        if let Err(err) = std::env::set_current_dir("database") {
+        if let Err(err) = std::env::set_current_dir("aki-data") {
             eprintln!("[x] enter 'database' failed: {err}");
             std::process::exit(1);
         }
