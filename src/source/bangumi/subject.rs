@@ -114,7 +114,7 @@ pub struct Tag {
     pub name: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Type {
     Book,
     Anime,
@@ -137,6 +137,32 @@ impl TryFrom<i64> for Type {
     }
 }
 
+impl Type {
+    /// 接口里表示这个类型的数字，与 [`TryFrom<i64>`] 互为反向。
+    #[must_use]
+    pub fn code(self) -> i64 {
+        match self {
+            Type::Book => 1,
+            Type::Anime => 2,
+            Type::Music => 3,
+            Type::Game => 4,
+            Type::Real => 6,
+        }
+    }
+
+    /// 用于展示的小写名字，与接口文档里的枚举名一致。
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Type::Book => "book",
+            Type::Anime => "anime",
+            Type::Music => "music",
+            Type::Game => "game",
+            Type::Real => "real",
+        }
+    }
+}
+
 /// Subject
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Subject {
@@ -148,6 +174,8 @@ pub struct Subject {
     pub series: bool,
     pub nsfw: bool,
     pub locked: bool,
+    /// 播出/发售日期。接口在日期未定时给空字符串，按「没有日期」处理。
+    #[serde(default, deserialize_with = "deserialize_date")]
     pub date: Option<NaiveDate>,
     pub platform: String,
     pub images: Images,
@@ -159,6 +187,20 @@ pub struct Subject {
     pub collection: Collection,
     pub meta_tags: Vec<String>,
     pub tags: Vec<Tag>,
+}
+
+/// 容错地读 `date` 字段：空字符串（日期未定）等价于没有日期。
+fn deserialize_date<'de, D>(deserializer: D) -> Result<Option<NaiveDate>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = Option::<String>::deserialize(deserializer)?;
+    match raw.as_deref() {
+        None | Some("") => Ok(None),
+        Some(text) => NaiveDate::parse_from_str(text, "%Y-%m-%d")
+            .map(Some)
+            .map_err(serde::de::Error::custom),
+    }
 }
 
 impl Subject {
@@ -198,16 +240,72 @@ impl Subject {
     pub fn r#type_enumed(&self) -> Result<Type, crate::utils::error::EnumVariantNotFound> {
         Type::try_from(self.r#type)
     }
+
+    /// 按语言挑一个名字：中文环境优先用 `name_cn`，其余语言用原名。
+    ///
+    /// 接口没有英文名字段，所以 `EnUs` 也只会拿到原名。`name_cn` 为空时同样退回原名，
+    /// 因此结果**保证非空**（原名是必填字段）。
+    #[must_use]
+    pub fn localized_name(&self, language: crate::Language) -> &str {
+        match language {
+            crate::Language::ZhCn if !self.name_cn.is_empty() => &self.name_cn,
+            _ => &self.name,
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::Subject;
+    use super::{Subject, Type};
 
     #[test]
     fn deserialize() {
         let json = include_str!("subject-example.json");
         let _: Subject = serde_json::from_str(json).unwrap();
+    }
+
+    /// 搜索接口与条目接口在日期未定时给的是空字符串，不能当成解析失败。
+    #[test]
+    fn empty_date_is_no_date() {
+        let mut value: serde_json::Value =
+            serde_json::from_str(include_str!("subject-example.json")).unwrap();
+        assert!(value["date"].is_string(), "样本里应当有 date 字段");
+        value["date"] = serde_json::Value::String(String::new());
+        let subject: Subject = serde_json::from_value(value).unwrap();
+        assert!(subject.date.is_none());
+    }
+
+    /// `code()` 与 `TryFrom<i64>` 必须互为反向，否则筛选条件和展示会对不上。
+    #[test]
+    fn type_code_round_trips() {
+        for subject_type in [
+            Type::Book,
+            Type::Anime,
+            Type::Music,
+            Type::Game,
+            Type::Real,
+        ] {
+            assert_eq!(Type::try_from(subject_type.code()).unwrap(), subject_type);
+            assert!(!subject_type.as_str().is_empty());
+        }
+        assert!(Type::try_from(5).is_err(), "5 不是合法的条目类型");
+    }
+
+    /// 中文环境用 `name_cn`，其他语言与 `name_cn` 为空时都用原名。
+    #[test]
+    fn localized_name_falls_back_to_the_raw_name() {
+        let mut value: serde_json::Value =
+            serde_json::from_str(include_str!("subject-example.json")).unwrap();
+        value["name"] = serde_json::Value::String("RAW".to_string());
+        value["name_cn"] = serde_json::Value::String("中文名".to_string());
+        let subject: Subject = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(subject.localized_name(crate::Language::ZhCn), "中文名");
+        assert_eq!(subject.localized_name(crate::Language::JaJp), "RAW");
+        assert_eq!(subject.localized_name(crate::Language::EnUs), "RAW");
+
+        value["name_cn"] = serde_json::Value::String(String::new());
+        let subject: Subject = serde_json::from_value(value).unwrap();
+        assert_eq!(subject.localized_name(crate::Language::ZhCn), "RAW");
     }
 
     #[tokio::test]

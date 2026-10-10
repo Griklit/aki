@@ -68,11 +68,20 @@ aki-cli anime build-index                        # 重建可删除、可重建�
 # 游戏（别名 g）
 aki-cli game add-with-steam <appid>              # 按 Steam appid 添加
 aki-cli game sync-owned-games [--no-create] [--all]  # 同步已拥有游戏的时长/最后游玩
+
+# Bangumi 接口（别名 b）
+aki-cli bangumi search-subject [关键词] [-l <条数>] [-t <类型>...] [--tag <标签>...] [-s <排序>]
+aki-cli bangumi search-subject --season                 # 本季新番，按排名
+aki-cli bangumi search-subject --season 2026-01         # 2026 年 1 月番（1.1~3.31），按排名
+aki-cli bangumi search-subject --season last -s heat    # 上一季，按收藏人数
+aki-cli bangumi search-subject -t anime --air-date ">=2026-10-01" --air-date "<2027-01-01"  # 关键词可省
 ```
 
 诊断信息走 `stderr` 并带级别符号前缀（`[#] [+] [?] [!] [x]`），命令结果走 `stdout`。
 
 > `game add-with-steam` 需要能访问 `store.steampowered.com`；走代理时设置 `HTTPS_PROXY` 即可。
+>
+> `bangumi search-subject` 只查接口、不写本地数据；搜到想要的条目后，再拿 id 跑 `anime add-with-bangumi <id>` 入库。
 
 ## 项目结构
 
@@ -83,7 +92,7 @@ src/
 ├── anime/        # 番剧领域：core / info / state / score / index / command
 ├── game/         # 游戏领域，与 anime 同构
 ├── meta/         # 元数据与带命名空间的 ID
-├── source/       # 数据来源：bangumi / steam 的接口与原始响应落盘
+├── source/       # 数据来源：bangumi / steam 的接口、原始响应落盘与各自的 command
 ├── common/       # 共享基础类型（Language、Score）
 ├── resource/     # 资源管理（早期 WIP）
 ├── utils/        # 工具函数

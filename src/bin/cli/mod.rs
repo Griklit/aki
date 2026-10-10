@@ -1,4 +1,5 @@
 mod anime;
+mod bangumi;
 mod game;
 use clap::{Parser, Subcommand};
 
@@ -18,6 +19,9 @@ enum SubCommands {
     /// 游戏
     #[command(visible_alias = "g")]
     Game(game::GameCommand),
+    /// Bangumi 接口
+    #[command(visible_alias = "b")]
+    Bangumi(bangumi::BangumiCommand),
 }
 
 fn main() {
@@ -25,6 +29,7 @@ fn main() {
     let ret = match cli.command {
         SubCommands::Anime(command) => command.run(),
         SubCommands::Game(command) => command.run(),
+        SubCommands::Bangumi(command) => command.run(),
     };
     match ret {
         Ok(Some(s)) => println!("{}", s),

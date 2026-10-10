@@ -41,7 +41,7 @@ INSERT INTO anime_state (
     positive, negative, recommendation, comment, watch_start_date, watch_finish_date
 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)";
 
-/// 把全部番剧的 `state` 导出到 `output` 指定的 SQLite 文件，返回（写入的文件, 行数）。
+/// 把全部番剧的 `state` 导出到 `output` 指定的 `SQLite` 文件，返回（写入的文件, 行数）。
 ///
 /// `output` 是必填的，不给默认位置——导出到哪由调用方明确决定。
 /// 每次运行都会重建 `anime_state` 表（`DROP TABLE IF EXISTS` + `CREATE`），

@@ -1,4 +1,5 @@
 use crate::config::{CONFIG, ConfigSteam};
+use crate::utils::text::truncate;
 use serde::de::DeserializeOwned;
 
 /// 请求 Steam 时产生的错误。
@@ -161,17 +162,6 @@ pub async fn request_with_raw<E: Endpoint>(
     }
 }
 
-fn truncate(s: &str, max: usize) -> String {
-    if s.len() <= max {
-        return s.to_string();
-    }
-    let mut end = max;
-    while !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}…", &s[..end])
-}
-
 /// 解析成 `T`，并把 JSON 错误统一包装起来（[`request`] 会补上 URL 与响应片段）。
 pub fn parse_json<T: DeserializeOwned>(body: &str) -> Result<T, SteamRequestError> {
     serde_json::from_str(body).map_err(|source| SteamRequestError::Parse {
@@ -184,12 +174,6 @@ pub fn parse_json<T: DeserializeOwned>(body: &str) -> Result<T, SteamRequestErro
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn truncate_is_char_safe() {
-        assert_eq!(truncate("abc", 10), "abc");
-        assert_eq!(truncate("中文中文", 3), "中…");
-    }
 
     #[test]
     fn parse_json_reports_error() {

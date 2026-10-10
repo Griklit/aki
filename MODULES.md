@@ -34,7 +34,7 @@ aki/
 │   ├── config.rs           # 配置加载模块
 │   ├── anime/              # 番剧领域模型（核心）
 │   ├── game/               # 游戏领域模型（与 anime 同构）
-│   ├── source/             # 数据来源集成：source::bangumi / source::steam
+│   ├── source/             # 数据来源集成：source::bangumi / source::steam（各带自己的 command/）
 │   ├── meta/               # 元数据/ID 管理
 │   ├── common/             # 共享基础类型
 │   ├── resource/           # 资源管理（封面等，WIP）
@@ -690,15 +690,92 @@ impl<T> SteamRawStore<T> {
 **方法**:
 - `request_with_id(client, id)` — 异步请求 Bangumi API，获取指定 ID 的条目
 - `save()` / `load_with_id(id)` — 原始响应落到 / 读自 `BangumiNamespace::subject_path(id)`
-- `r#type_enumed()` — 将数字类型转为 `Type` 枚举
+- `r#type_enumed()` — 将数字类型转为 `Type` 枚举；反向的 `Type::code()` 给出接口用的数字（`5` 不是合法类型），`Type::as_str()` 给出 `book` / `anime` / `music` / `game` / `real`
+- `localized_name(language)` — 按语言取名字：中文环境用 `name_cn`，其余语言、以及 `name_cn` 为空时用原名（结果保证非空）
 
-**示例数据**: `subject-example.json` 包含一条完整的 Bangumi API 响应样本，用于测试。
+**示例数据**: `subject-example.json` 包含一条完整的 Bangumi API 响应样本，用于测试。`date` 用容错的反序列化：接口在日期未定时给空字符串，这里当成「没有日期」而不是解析失败。
 
 ### 4.2 BangumiNamespace (`src/source/bangumi/namespace.rs`)
 
 **文件**: [src/source/bangumi/namespace.rs](src/source/bangumi/namespace.rs)
 
 **功能**: 把 `[bangumi] path`（默认 `database/source/bangumi`）注册成命名空间 `"bangumi"`，并提供域内路径：`subject_path(id)` = `<data_path>/subject/<id>.json`、`subject_dir()`。`Subject::save` / `load_with_id` 只调它，不再直接用 `CONFIG` 拼路径。
+
+### 4.3 命令：search_subject (`src/source/bangumi/command/`)
+
+**目录**: [src/source/bangumi/command/](src/source/bangumi/command/)
+
+**文件**: [search_subject.rs](src/source/bangumi/command/search_subject.rs)、[mod.rs](src/source/bangumi/command/mod.rs)
+
+**功能**: 调 `POST /v0/search/subjects`（接口文档里的「条目搜索」，实验性接口）按关键词搜索条目。只管请求与解析：**不落盘、不打印**，怎么展示交给调用方。
+
+```rust
+pub const MAX_LIMIT: u32 = 20;      // 接口侧的上限，请求更大也只回 20 条
+pub const DEFAULT_LIMIT: u32 = 10;  // 调用方没指定 limit 时给多少条
+
+pub async fn search_subjects(
+    client: &reqwest::Client,
+    request: &SearchSubjects,
+) -> Result<SubjectSearchResult, SearchSubjectError>
+```
+
+请求体与接口文档一一对应：
+
+```rust
+pub struct SearchSubjects {
+    pub keyword: String,                    // 字段必填，但可以是空串（= 不按关键词匹配）
+    pub sort: Option<SearchSort>,           // match(默认) / heat / rank / score
+    pub filter: Option<SearchSubjectsFilter>,
+    pub limit: u32,                         // 走 query string，不进请求体
+    pub offset: u32,                        // 同上
+}
+```
+
+```rust
+pub struct SearchSubjectsFilter {
+    pub types: Option<Vec<i64>>,            // 序列化成 "type"，多值之间为「或」
+    pub tag: Option<Vec<String>>,           // 「且」
+    pub meta_tags: Option<Vec<String>>,     // 「且」，`-标签` 表示排除
+    pub air_date: Option<Vec<String>>,      // `>=2020-07-01` 这类比较式
+    pub rating: Option<Vec<String>>,        // `>=6`、`<8`
+    pub rating_count: Option<Vec<String>>,
+    pub rank: Option<Vec<String>>,
+    pub nsfw: Option<bool>,
+}
+```
+
+- **省略即不发送**：所有可选字段都带 `skip_serializing_if = "Option::is_none"`，没给的字段不会以 `null` 的形式发出去（接口把两者当不同意思）
+- **`keyword` 可以是空串**：接口把 `""` 当成「不按关键词匹配」，所以只给筛选条件也能搜（例如按 `air_date` 列出某一季的新番）。字段本身仍然照发——接口 schema 要求 `keyword` 必须存在，只是允许为空
+- **分页不走请求体**：`limit` / `offset` 由 `search_subjects` 拼成 query string，因此标了 `#[serde(skip)]`；`SearchSubjects::new(keyword)` 给默认值（`DEFAULT_LIMIT` 条、offset 0、不筛选、不排序）
+- **`limit` 与上限是两个数**：接口把过大的 `limit` 截到 [`MAX_LIMIT`]（20）——试过请求 50，响应里的 `limit` 仍是 20，会如实反映实际值；[`DEFAULT_LIMIT`]（10）只是调用方不指定时用的默认条数
+- 响应解析成 [`SubjectSearchResult`]（= 文档里的 `Paged[Subject]`）：`total` / `limit` / `offset` / `data`，其中 `data` 就是 [`Subject`]，字段与 `/v0/subjects/{id}` 的返回一致（额外出现的 `image` 字段被忽略）
+- 错误分三类：`Request`（网络）、`Status`（非 2xx，附带状态码、URL 与 200 字符的响应片段）、`Parse`（响应不是合法的 `Paged[Subject]`）
+- 原始响应**不落盘**：搜索没有稳定的身份（同一个关键词的结果会变），留一份原文也没有回放价值
+
+### 4.4 Season — 季度换算 (`src/source/bangumi/season.rs`)
+
+**文件**: [src/source/bangumi/season.rs](src/source/bangumi/season.rs)
+
+**功能**: 番剧的「季度」概念与接口 `air_date` 条件之间的换算。季度指 1 / 4 / 7 / 10 月开播的那三个月，例如 2026 年 1 月番 = `2026-01-01` ~ `2026-03-31`。
+
+```rust
+pub struct Season { /* year, quarter(1~4) */ }
+
+impl Season {
+    pub fn new(year: i32, quarter: u8) -> Option<Self>   // 年份限 1900~2100
+    pub fn of(date: NaiveDate) -> Self                   // 某个日期属于哪一季
+    pub fn current() -> Self                             // 今天所在的那一季
+    pub fn month(self) -> u32                            // 开播月份：1 / 4 / 7 / 10
+    pub fn next(self) / prev(self) -> Self               // 跨年自动进退位
+    pub fn air_date_filter(self) -> [String; 2]          // [">=本季首日", "<下季首日"]
+}
+impl FromStr for Season { type Err = SeasonParseError; }
+```
+
+- **上界是开区间**：1 月番写成 `>=2026-01-01` 且 `<2026-04-01`，这样就正好覆盖到 3.31，不需要知道这个月有 30 还是 31 天
+- `FromStr` 认这几种写法（大小写不敏感）：`current` / `this` / `now`（本季）、`last` / `prev`（上一季）、`next`（下一季）、`2026-10`（月份写法，只能是 1 / 4 / 7 / 10）、`2026-Q4`（季度序号写法）；`Display` 反向输出 `2026-10` 这种写法，`FromStr` 与 `Display` 可以互相往返
+- 解析不出来（`2026-05`、`2026-13`、`abc`…）统一报 [`SeasonParseError::Invalid`]，错误信息里写明可用的写法
+- 只做换算，不发请求：`--season` 在 CLI 里就是「`Season::air_date_filter()` 追加进 `air_date` 筛选条件」，用户自己给的 `--air-date` 不会被覆盖
 
 ---
 
@@ -900,6 +977,18 @@ pub fn normalize(path: impl AsRef<Path>) -> PathBuf
 
 处理 `.`（当前目录）、`..`（父目录）、多余斜杠，保留超出根目录的 `..` 不消除。支持 Windows 路径前缀。
 
+### 8.3 text (`src/utils/text.rs`)
+
+**文件**: [src/utils/text.rs](src/utils/text.rs)
+
+**功能**: 文本处理。
+
+```rust
+pub fn truncate(s: &str, max: usize) -> String
+```
+
+把一段文本截到 `max` 字节以内，附在错误信息里当响应片段用。按字节截断但不会把一个 UTF-8 字符切成两半，被截断时补 `…`。Steam 与 Bangumi 的错误分支共用它（原先 [`source::steam::http`](src/source/steam/http.rs) 里有一份私有实现）。
+
 ---
 
 ## 九、可执行入口 (`src/bin/`)
@@ -921,16 +1010,19 @@ aki-cli
 │   ├── export-state -o <path>
 │   ├── import-state -i <path> [--dry-run]
 │   └── verify
-└── game (alias: g)
-    ├── add-with-steam <appid>
-    ├── sync-owned-games [--no-create] [--all]
-    └── verify
+├── game (alias: g)
+│   ├── add-with-steam <appid>
+│   ├── sync-owned-games [--no-create] [--all]
+│   └── verify
+└── bangumi (alias: b)
+    └── search-subject [keyword] [-l <limit>] [--offset <n>] [-s <sort>] [-t <type>...] [--tag <tag>...] [--air-date <expr>...] [--rating <expr>...] [--season [<spec>]] [--nsfw]
 ```
 
 **文件**:
-- [mod.rs](src/bin/cli/mod.rs) — CLI 入口，定义 `SubCommands::Anime` / `SubCommands::Game` 子命令
+- [mod.rs](src/bin/cli/mod.rs) — CLI 入口，定义 `SubCommands::Anime` / `SubCommands::Game` / `SubCommands::Bangumi` 子命令
 - [anime.rs](src/bin/cli/anime.rs) — Anime 子命令，`AddWithBangumi` / `UpdateWithBangumi` 接收 Bangumi ID，创建 tokio runtime 调用对应的异步函数，成功后打印番剧标题；`BuildIndex` 重建 fjall 索引并打印写入的 bangumi-id 与标题键数量；`Search` 按标题匹配字符串（走 title 索引，没索引时自动退回扫文件）；`ExportState` / `ImportState` 与 SQLite 互导 `state`
 - [game.rs](src/bin/cli/game.rs) — Game 子命令，`AddWithSteam` 接收 Steam appid，创建 tokio runtime 调用 `game_command::add_with_steam`，成功后打印游戏标题与时长/成就；`Verify` 尚未实现
+- [bangumi.rs](src/bin/cli/bangumi.rs) — Bangumi 子命令，目前只有 `SearchSubject`：关键词**可省**（省了就只用筛选条件，接口把空关键词当成「不按关键词匹配」，因此 `-t anime --air-date ">=2026-10-01" --air-date "<2027-01-01"` 就能列出某一季的新番），拼出 [`source::bangumi::command::SearchSubjects`](src/source/bangumi/command/search_subject.rs) 后调用 `search_subjects`，再把结果逐行打印成 `{bangumi-id:>7} - [{date:^10}][{type:^5}] {译名}（{原名}） - #{rank} {score}`（如 `   1988 - [2006-11-01][book ] 物语系列（〈物語〉シリーズ） - #117 8.5`）。条目 ID 右对齐到 7 位，日期与类型居中（分别占 10 / 5 位），名称由 [`Subject::localized_name()`](src/source/bangumi/subject.rs) 按系统语言取（中文环境用 `name_cn`，取不到或与原名相同则省掉括号），日期未定时写 `unknown`，排名 0 就是接口给的「未上榜」。`--type` 的取值经 CLI 自己的 clap `ValueEnum` 映射成接口要的数字。`--season` 是查季番的快捷方式：把 [`Season`](src/source/bangumi/season.rs) 解析成一组 `air_date` 条件（`>=本季首日` + `<下季首日`），没显式给 `-t` 时补上 `anime`、没显式给 `-s` 时改成 `rank`；按 `rank` 排序时还会加一条 `rank > 0`——接口把未上榜记成 0 且按升序排，不加这条的话排在前面的全是还没上榜的条目
 
 **使用示例**:
 ```bash
@@ -944,14 +1036,27 @@ aki-cli anime import-state -i /tmp/state.db  # 真写回数据文件
 aki-cli game add-with-steam 570             # 拉取 Dota 2 并存原始响应
 aki-cli game sync-owned-games --no-create   # 只把「已拥有游戏」里为空的时长/最后游玩补上
 aki-cli game sync-owned-games --all         # 顺便给缺失的游戏建条目，并逐条打印
+aki-cli bangumi search-subject 物语 -t anime -l 5   # 搜 Bangumi 条目（接口最多回 20 条）
+aki-cli bangumi search-subject 命运石之门 --tag 科幻 -s score
+aki-cli bangumi search-subject 物语 --offset 20     # 翻下一页
+aki-cli bangumi search-subject -t anime --air-date ">=2026-10-01" --air-date "<2027-01-01" -s heat
+                                                    # 关键词可省：只看 2026 年 10 月番（本季新番）
+aki-cli bangumi search-subject --season             # 本季新番，按排名（上面的快捷写法）
+aki-cli bangumi search-subject --season 2026-01     # 2026 年 1 月番（1.1~3.31），按排名
+aki-cli bangumi search-subject --season 2026-Q4 -s heat   # 用季度序号写，改按收藏人数排
+aki-cli bangumi search-subject --season last        # 上一季；next 是下一季
+aki-cli bangumi search-subject 药屋 --season        # 关键词 + 本季
 # 或
 aki-cli a add-with-bangumi 475354
 aki-cli a export-state -o /tmp/state.db
 aki-cli g add-with-steam 570
 aki-cli g sync-owned-games
+aki-cli b search-subject 物语
 ```
 
 > `game add-with-steam` 需要能访问 `store.steampowered.com`；如果本机走代理，`reqwest` 会读 `HTTPS_PROXY`，没设置代理且直连不通时会报 `http request error`。
+>
+> `bangumi search-subject` 只读接口、不碰本地数据：它不发 `add-with-bangumi`，搜到的结果要入库还得自己拿 id 再跑 `anime add-with-bangumi <id>`。
 
 ### 9.2 scripts — 数据迁移脚本 (`src/bin/scripts/`)
 
