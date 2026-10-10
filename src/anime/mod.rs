@@ -1,5 +1,4 @@
 pub mod command;
-mod context;
 pub mod index;
 mod info;
 mod namespace;
@@ -8,7 +7,6 @@ mod state;
 
 use crate::source::bangumi::Subject;
 use crate::{CONFIG, Language, Meta, MetaId};
-pub use context::{ANIME_CONTEXT, AnimeContext};
 pub use info::{AnimeInfo, AnimeInfoInternationalization};
 pub use namespace::AnimeNamespace;
 pub use score::AnimeScore;
@@ -82,6 +80,20 @@ impl Anime {
             .iter()
             .filter_map(|(l, i)| i.summary.as_deref().map(|v| (*l, v)))
             .collect()
+    }
+
+    /// 这条番剧的全部标题（原标题 + 各语言翻译标题）。
+    ///
+    /// 索引与搜索都以它为「这条番剧有哪些标题」的唯一来源；空标题会被跳过
+    /// （索引键不能为空，空字符串也不值得拿去匹配）。
+    pub fn all_titles(&self) -> impl Iterator<Item = &str> {
+        std::iter::once(self.info.title.as_str())
+            .chain(
+                self.internationalizations
+                    .values()
+                    .filter_map(|i| i.title.as_deref()),
+            )
+            .filter(|title| !title.trim().is_empty())
     }
 
     pub fn load(path: impl AsRef<Path>) -> Result<Self, LoadAnimeError> {

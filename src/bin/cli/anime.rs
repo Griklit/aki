@@ -20,7 +20,7 @@ pub struct BuildIndex;
 
 #[derive(Args)]
 pub struct Search {
-    /// 检索关键词（匹配标题和简介）。
+    /// 检索关键词（匹配标题）。
     query: String,
     /// 返回结果数量上限。
     #[arg(short, long, default_value = "16")]
@@ -50,9 +50,9 @@ pub enum AnimeSubCommands {
     AddWithBangumi(AddWithBangumi),
     /// 按 Bangumi 条目 ID 重新拉取并刷新动画数据（不改动 state）。
     UpdateWithBangumi(UpdateWithBangumi),
-    /// 重建动画索引（全文检索和 Bangumi ID 索引）。
+    /// 重建动画索引（fjall：bangumi-id 与 title 两个 keyspace）。
     BuildIndex(BuildIndex),
-    /// 按标题和简介全文检索动画。
+    /// 按标题检索动画：走 title 索引，索引未建时退回扫数据文件。
     Search(Search),
     /// 把所有动画的 state 导出到 SQLite 文件。
     ExportState(ExportState),
@@ -82,12 +82,12 @@ impl AnimeSubCommands {
             Self::BuildIndex(_) => {
                 let result = anime_command::build_index()?;
                 Ok(Some(format!(
-                    "indexed animes: {}, bangumi ids: {}",
-                    result.animes, result.bangumi_ids
+                    "indexed {} bangumi ids and {} titles",
+                    result.bangumi_id_to_meta_id, result.title_to_meta_id
                 )))
             }
             Self::Search(args) => {
-                let animes = anime_command::search(&args.query, args.limit)?;
+                let animes = anime_command::search(&args.query, args.limit);
                 Ok(Some(
                     animes
                         .into_iter()

@@ -1,7 +1,7 @@
 use std::io;
 use std::path::PathBuf;
 
-use super::super::{Anime, SaveAnimeError, index::BangumiIdIndex};
+use super::super::{Anime, SaveAnimeError, index::AnimeIndex};
 use crate::MetaId;
 use crate::source::bangumi::Subject;
 
@@ -27,9 +27,10 @@ pub async fn update_with_bangumi(
     client: &reqwest::Client,
     bangumi_id: i64,
 ) -> Result<Anime, UpdateWithBangumiError> {
-    let mut index = BangumiIdIndex::load();
+    // 索引只是加速定位的缓存，打不开就退化成遍历数据目录。
+    let index = AnimeIndex::open_or_warn();
     // 先确认要更新的条目存在且唯一，避免为一次注定失败的调用写入 Bangumi 数据。
-    let (mut anime, outdated_path) = find_exclusive_anime(&mut index, bangumi_id)?;
+    let (mut anime, outdated_path) = find_exclusive_anime(index.as_ref(), bangumi_id)?;
 
     let subject = Subject::request_with_id(client, bangumi_id)
         .await
@@ -49,7 +50,10 @@ pub async fn update_with_bangumi(
         .save_as_meta_id_force()
         .map_err(UpdateWithBangumiError::SaveAnime)?;
     // `meta.id` 可能已按最新数据重算：先把索引指向新文件，再删除旧文件。
-    index.set(bangumi_id, &anime.meta.id.id);
+    if let Some(index) = index.as_ref() {
+        index.set_anime_index_or_warn(&anime);
+        index.flush_or_warn();
+    }
     if path != outdated_path {
         std::fs::remove_file(&outdated_path).map_err(UpdateWithBangumiError::RemoveOutdatedFile)?;
     }
@@ -58,15 +62,15 @@ pub async fn update_with_bangumi(
 
 /// 找出 `bangumi_id` 唯一对应的番剧，并返回它当前的数据文件路径。
 ///
-/// 先查 `.aki` 下的 bangumi-id 索引；索引缺失或已失效（文件被改名、删除）时
-/// 回退到遍历数据目录，并把找到的映射写回索引。
+/// 先查索引；索引不可用、未命中或已失效（文件被改名、删除）时回退到遍历数据
+/// 目录，并把找到的映射写回索引。
 fn find_exclusive_anime(
-    index: &mut BangumiIdIndex,
+    index: Option<&AnimeIndex>,
     bangumi_id: i64,
 ) -> Result<(Anime, PathBuf), UpdateWithBangumiError> {
     if let Some(anime) = index
-        .get(bangumi_id)
-        .and_then(|meta_id| load_indexed(bangumi_id, meta_id))
+        .and_then(|index| index.get_meta_id_of_bangumi_id(bangumi_id))
+        .and_then(|meta_id| load_indexed(bangumi_id, &meta_id))
     {
         let path = anime.meta.id.json_data_path();
         return Ok((anime, path));
@@ -83,7 +87,10 @@ fn find_exclusive_anime(
             duplicated + 1,
         ));
     }
-    index.set(bangumi_id, &anime.meta.id.id);
+    if let Some(index) = index {
+        index.set_anime_index_or_warn(&anime);
+        index.flush_or_warn();
+    }
     let path = anime.meta.id.json_data_path();
     Ok((anime, path))
 }
@@ -145,6 +152,17 @@ mod tests {
             state,
             Some(bangumi_id),
         )
+    }
+
+    #[test]
+    fn without_an_index_it_falls_back_to_scanning() {
+        // 索引不可用（`None`）时，定位必须退化成遍历数据目录，而不是直接失败。
+        // 这里用一个几乎不可能存在的 bangumi_id，走的正是遍历后未命中的分支。
+        let error = find_exclusive_anime(None, i64::MAX).unwrap_err();
+        assert!(
+            matches!(error, UpdateWithBangumiError::NotFound(id) if id == i64::MAX),
+            "unexpected error: {error}"
+        );
     }
 
     #[test]

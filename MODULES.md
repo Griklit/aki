@@ -7,7 +7,7 @@
 - 从 [Bangumi](https://bgm.tv) 拉取番剧元数据，从 [Steam](https://store.steampowered.com) 拉取游戏元数据
 - 通过 CLI 命令行交互管理列表
 
-技术栈：Rust 2024 edition, tokio (async), reqwest (HTTP), serde/serde_json (序列化), clap (CLI), tantivy (全文搜索，已引入).
+技术栈：Rust 2024 edition, tokio (async), reqwest (HTTP), serde/serde_json (序列化), clap (CLI), fjall (键值索引).
 
 ---
 
@@ -76,9 +76,9 @@ aki/
 | `Language` | `common::language` | 语言枚举 |
 | `Score` | `common::score` | 评分 trait |
 | `CONFIG` | `config` | 全局配置（懒加载） |
-| `Meta` | `meta::core` | 元数据容器 |
-| `MetaData` | `meta::core` | 元数据信息 |
-| `MetaId` | `meta::core` | 带命名空间的 ID |
+| `Meta` | `meta` | 元数据容器 |
+| `MetaData` | `meta::meta_data` | 元数据信息 |
+| `MetaId` | `meta::meta_id` | 带命名空间的 ID |
 | `Namespace` | `meta::namespace` | 命名空间 trait |
 | `ImageType` | `resource::image_type` | 图片类型枚举 |
 | `Resource` | `resource::core` | 通用资源 |
@@ -128,16 +128,14 @@ aki/
 | 方法 | 路径 |
 |------|------|
 | `anime_data_path()` | `{root}/{anime.path}` |
-| `anime_tantivy_index_path()` | `{anime_data_path}/.aki/tantivy-index` |
-| `anime_fjall_index_path()` | `{anime_data_path}/.aki/fjall-index`（预留，未使用） |
-| `anime_bangumi_id_index_path()` | `{anime_data_path}/.aki/bangumi-id-index.json` |
+| `anime_fjall_index_path()` | `{anime_data_path}/.aki/fjall-index`（索引数据库目录） |
 | `anime_state_db_path()` | `{root}/anime-state.db`（`export-state` 的默认输出） |
 | `bangumi_subject_path()` | `{root}/bangumi/subject` |
 | `game_data_path()` | `{root}/{game.path}` |
 | `steam_data_path()` | `{root}/steam`（Steam 原始响应） |
 | `namespace_data_path(kind)` | 按命名空间取目录，未登记的退回 `{root}/{kind}` |
 
-`namespace_data_path()` 是 [`MetaId`](src/meta/core.rs) 找数据目录的入口：`MetaId::json_data_path()` 调用 `T::json_path(id)`，而 `Namespace::json_path` → `Namespace::data_path()`，所以路径规则完全由命名空间决定，`meta` 模块里不再有任何领域名字的硬编码。
+`namespace_data_path()` 是 [`MetaId`](src/meta/meta_id.rs) 找数据目录的入口：`MetaId::json_data_path()` 调用 `T::json_path(id)`，而 `Namespace::json_path` → `Namespace::data_path()`，所以路径规则完全由命名空间决定，`meta` 模块里不再有任何领域名字的硬编码。
 
 ### 配置文件格式 (`database/aki.toml`)
 
@@ -301,7 +299,7 @@ pub async fn update_with_bangumi(client: &reqwest::Client, bangumi_id: i64)
 ```
 
 流程：
-1. 载入 `.aki/bangumi-id-index.json` 索引，按 `bangumi_id` 直接定位番剧；索引未命中或索引项已失效（文件被改名、删除）时回退到遍历数据目录，并把结果写回索引：一条都没有报 `NotFound`，多于一条报 `Ambiguous`（先查再联网，失败时不会写入任何数据）
+1. 载入 `.aki/fjall-index/` 里的 bangumi-id 索引，按 `bangumi_id` 直接定位番剧；索引未命中或索引项已失效（文件被改名、删除）时回退到遍历数据目录，并把结果写回索引：一条都没有报 `NotFound`，多于一条报 `Ambiguous`（先查再联网，失败时不会写入任何数据）
 2. 调用 Bangumi API 获取条目数据并保存
 3. 用最新条目刷新该番剧
 4. 写入数据文件并同步索引；若 `meta.id` 变化导致改名，先把索引指向新文件，再删除旧文件，新文件名已被其他条目占用时报 `TargetExists`（不覆盖）
@@ -317,49 +315,68 @@ pub async fn update_with_bangumi(client: &reqwest::Client, bangumi_id: i64)
 | `meta.data.create_time` | 保留原值 |
 | `state` | 用户填写，原样保留 |
 
-> `meta.id` 同时是搜索索引的键，改名后需要重新执行 `aki-cli anime build-index`，否则 `search` 会加载不到旧文件。
+> `search` 走 `.aki/fjall-index/` 的 `title` keyspace；索引不存在或还没建时可以退回扫数据目录（只读标题），索引只影响快慢，不影响结果。
 
 ### 3.8 索引 (`src/anime/index/`)
 
 **目录**: [src/anime/index/](src/anime/index/)
 
-索引都放在番剧数据目录的 `.aki/` 子目录下，随时可以删除并从数据目录重建。
+索引就是 `{anime_data_path}/.aki/fjall-index/` 下的一个 fjall 数据库，随时可以删除并从数据目录重建。里面有**两个平表 keyspace**，每个都是「键 → 一个 `meta.id`」，没有倒排、没有分词：
 
-#### bangumi-id 索引 (`src/anime/index/bangumi_id.rs`)
+| keyspace | 键 | 值 | 用途 |
+|----------|----|----|------|
+| `bangumi-id-to-meta-id` | `bangumi_id`（`i64::to_be_bytes`） | `meta.id` | `update-with-bangumi` 直接定位数据文件 |
+| `title-to-meta-id` | 小写化的标题 | `meta.id` | `search` 按标题找番剧 |
 
-**文件**: [src/anime/index/bangumi_id.rs](src/anime/index/bangumi_id.rs)
-
-**功能**: `bangumi_id` → `Anime::meta.id` 的简单 JSON 索引，让 `update-with-bangumi` 免遍历地定位番剧。
-
-- 位置: `{anime_data_path}/.aki/bangumi-id-index.json`（见 `Config::anime_bangumi_id_index_path()`）
-- 格式: `{ "<bangumi_id>": "<meta id>", ... }`
+整个模块只有 `fjall.rs` 一个文件（[src/anime/index/fjall.rs](src/anime/index/fjall.rs)）。
 
 ```rust
-pub struct BangumiIdIndex { /* path, entries: BTreeMap<i64, String> */ }
+pub struct AnimeIndex { /* Database + 两个 Keyspace */ }
+impl AnimeIndex {
+    pub fn open(path: impl AsRef<Path>) -> Result<Self, fjall::Error>;
+    pub fn open_or_warn() -> Option<Self>;              // 打不开就打印警告并退化成「没有索引」
+    pub fn set_bangumi_id_to_meta_id(&self, bangumi_id: i64, meta_id: &str) -> Result<(), fjall::Error>;
+    pub fn get_meta_id_of_bangumi_id(&self, bangumi_id: i64) -> Option<String>;
+    pub fn set_title_to_meta_id(&self, title: &str, meta_id: &str) -> Result<(), fjall::Error>;
+    pub fn set_anime_index(&self, anime: &Anime) -> Result<(), Vec<(&'static str, fjall::Error)>>;
+    pub fn set_anime_index_or_warn(&self, anime: &Anime);   // 逐个 keyspace 打印失败原因
+    pub fn title_entries(&self) -> impl Iterator<Item = (String, String)>;  // (小写标题, meta.id)
+    pub fn build() -> Result<BuildResult, fjall::Error>;
+    pub fn flush / flush_or_warn;                       // 批量写入后落盘
+}
 
-impl BangumiIdIndex {
-    pub fn load() -> Self;                                // 从 CONFIG 路径载入
-    pub fn load_at(path: impl Into<PathBuf>) -> Self;     // 从指定路径载入
-    pub fn get(&self, bangumi_id: i64) -> Option<&str>;
-    pub fn set(&mut self, bangumi_id: i64, meta_id: &str); // 写入并立即落盘
+pub struct BuildResult {
+    pub bangumi_id_to_meta_id: usize,
+    pub title_to_meta_id: usize,
+    pub errors: Vec<fjall::Error>,   // 单条写入失败不会中断整体重建
 }
 ```
 
-**写入时机**：`add-with-bangumi` 保存新番剧后、`update-with-bangumi` 遍历找到番剧后，以及更新导致 `meta.id` 重算后。
+- 键值都按 UTF-8 存（`meta.id` 原样、`bangumi_id` 用大端字节），取出即可读、不依赖 serde
+- 一条番剧有几个标题（**原名 + 各语言翻译**）就在 `title-to-meta-id` 里占几个键，见 [`Anime::all_titles`]；标题键统一小写、查询也小写化，因此大小写不敏感。空标题会被 `set_title_to_meta_id` 跳过——fjall 不接受空键
+- 打开数据库会**独占目录**，同一目录在同一进程里只应存在一个 `AnimeIndex` 实例，因此各命令都是用完即弃
 
-**重建**：`build_bangumi_id_index()` 遍历数据目录，用结果整体覆盖索引文件并返回映射数量（已删除的番剧不会残留在索引里）；`aki-cli anime build-index` 会先重建它，再重建全文索引。
+**写入时机**：`add-with-bangumi` 保存新番剧后、`update-with-bangumi` 遍历找到番剧后，以及更新导致 `meta.id` 重算后（都走 `set_anime_index_or_warn` + `flush_or_warn`）。
+
+**重建**：`AnimeIndex::build()` 遍历数据目录，先清空两个 keyspace 再整体写入（已删除的番剧不会残留在索引里），单条失败记进 `BuildResult::errors` 而不中断，最后落一次盘；`aki-cli anime build-index` 就是调它，打开/清空/落盘失败会带着错误返回而不是只打印警告。**注意**：`update-with-bangumi` 改了 `meta.id` 后旧键不会自动消失，想让索引立刻干净就跑一次 `build-index`。
 
 **读取方式**：命中的索引项仍要能读到对应文件、且其 `bangumi_id` 与查询一致才算有效，否则回退到遍历并修复索引。
 
-**容错**：这是可重建的缓存，文件不存在按空索引处理，文件损坏时打印警告并按空索引处理，读写失败只打印警告——都不会让真正的增删改失败，下一次成功的写入会自动修复。
+**容错**：这是可重建的缓存。各命令用 `open_or_warn()` 拿索引，拿不到就是 `None`，定位退化成遍历数据目录、写入被跳过，只打印一行警告——都不会让真正的增删改失败。
 
-#### tantivy 全文搜索索引 (`src/anime/index/tantivy.rs`)
+#### 搜索 (`src/anime/command/search.rs`)
 
-**文件**: [src/anime/index/tantivy.rs](src/anime/index/tantivy.rs)
+**文件**: [src/anime/command/search.rs](src/anime/command/search.rs)
 
-**功能**: 按语言分词的标题/摘要全文搜索索引，位于 `{anime_data_path}/.aki/tantivy-index/`，由 `aki-cli anime build-index` 全量重建。文档以 `meta.id` 为键，因此数据文件改名后（例如 `update-with-bangumi` 重算了 `meta.id`）必须重新执行 `build-index`（该命令会同时重建上面的 bangumi-id 索引）。
+**功能**: 按标题匹配字符串，[`Anime::all_titles`]（原名 + 各语言翻译标题）全部参与匹配，大小写不敏感。
 
-> [src/anime/index/fjall.rs](src/anime/index/fjall.rs) 是为 fjall 键值索引预留的未完成实现，当前未编入模块树（`index/mod.rs` 中仍是注释状态）。
+- 先扫 `title-to-meta-id` keyspace（约 1800 条键值对，一次全表扫描几十微秒），只对最终要返回的那几条去读数据文件
+- 索引目录不存在、打不开、或者标题表是空的（没跑过 `build-index`）时，退回扫数据目录；扫文件时只反序列化 `meta.id` 与标题（`TitleRecord`），不解析整个 `Anime`——完整反序列化在 debug 构建下要慢两个数量级
+- 分档：完全相同（4.0）> 前缀（3.0）> 包含（2.0），同档内标题越短越靠前（`rank - 字数/1000`）；一条番剧取所有标题里的最高分，按分数降序截取 `limit` 条
+- 空查询直接返回空结果
+
+> 实测（621 条番剧 / 1808 个标题）：`search 物语` 走索引 debug 11~17 ms、release 60 ms（release 里进程启动占大头），索引目录 0.6 MB。之前「遍历 + 完整反序列化」的写法是 4.6 s。
+
 
 ### 3.9 命令：export_state / import_state (`src/anime/command/`)
 
@@ -646,27 +663,46 @@ impl<T> SteamRawStore<T> {
 
 **功能**: 通用的元数据/ID 管理系统，支持命名空间隔离。
 
-### 5.1 Meta / MetaId / MetaData (`src/meta/core.rs`)
+### 5.1 MetaId (`src/meta/meta_id.rs`)
 
-**文件**: [src/meta/core.rs](src/meta/core.rs)
+**文件**: [src/meta/meta_id.rs](src/meta/meta_id.rs)
 
-**功能**: 元数据的核心结构。
+**功能**: 带命名空间的唯一标识符。
 
-- **`MetaId<T: Namespace>`** — 带命名空间的唯一标识符
-  - `id: String` — UUID v7 或自定义字符串（如 `[2010-10-04] 侵略!イカ娘`）
-  - `namespace: T` — 命名空间标记
-  - `json_data_path()` — 计算 JSON 文件的存储路径: `<data_path>/<sanitized_id>.json`
+```rust
+pub struct MetaId<T: Namespace> {
+    namespace: T,   // 序列化时写成 T::kind() 字符串
+    pub id: String, // UUID v7 或自定义字符串（如 [2010-10-04] 侵略!イカ娘）
+}
+```
 
-- **`MetaData`** — 元数据信息
-  - `title: Option<String>` — 可读标题
-  - `create_time: Option<DateTime<Utc>>` — 创建时间
+- `new()` / `with_id(id)` — 生成 UUID v7 或使用自定义 ID
+- `json_filename()` — 由 `id` 经文件名安全化得到的文件名（含扩展名）
+- `json_data_path()` — 计算 JSON 文件的存储路径: `<data_path>/<sanitized_id>.json`，目录与命名规则全部交给 `T`
 
-- **`Meta<T: Namespace>`** — 元数据容器
-  - `id: MetaId<T>` — 标识符
-  - `data: MetaData` — 元数据信息
-  - 工厂方法: `new(title)` 自动生成 UUID, `with_id(id, title)` 使用自定义 ID
+`namespace` 字段借 `Namespace` 的序列化辅助函数读写，因此 `MetaId` 是 `meta` 里唯一依赖命名空间序列化格式的类型。
 
-### 5.2 Namespace trait (`src/meta/namespace.rs`)
+### 5.2 MetaData (`src/meta/meta_data.rs`)
+
+**文件**: [src/meta/meta_data.rs](src/meta/meta_data.rs)
+
+**功能**: 元数据信息。
+
+- `title: Option<String>` — 可读标题
+- `create_time: Option<DateTime<Utc>>` — 创建时间
+
+### 5.3 Meta (`src/meta/mod.rs`)
+
+**文件**: [src/meta/mod.rs](src/meta/mod.rs)
+
+**功能**: 元数据容器，把 `MetaId` 与 `MetaData` 组装成领域聚合根里的 `meta` 字段。
+
+- `id: MetaId<T>` — 标识符
+- `data: MetaData` — 元数据信息
+- 工厂方法: `new(title)` 自动生成 UUID, `with_id(id, title)` 使用自定义 ID
+- `json_data_path()` — 转发给 `self.id.json_data_path()`
+
+### 5.4 Namespace trait (`src/meta/namespace.rs`)
 
 **文件**: [src/meta/namespace.rs](src/meta/namespace.rs)
 
@@ -837,13 +873,15 @@ aki-cli
 
 **文件**:
 - [mod.rs](src/bin/cli/mod.rs) — CLI 入口，定义 `SubCommands::Anime` / `SubCommands::Game` 子命令
-- [anime.rs](src/bin/cli/anime.rs) — Anime 子命令，`AddWithBangumi` / `UpdateWithBangumi` 接收 Bangumi ID，创建 tokio runtime 调用对应的异步函数，成功后打印番剧标题；`BuildIndex` 重建全文索引与 bangumi-id 索引并打印两者数量；`ExportState` / `ImportState` 与 SQLite 互导 `state`
+- [anime.rs](src/bin/cli/anime.rs) — Anime 子命令，`AddWithBangumi` / `UpdateWithBangumi` 接收 Bangumi ID，创建 tokio runtime 调用对应的异步函数，成功后打印番剧标题；`BuildIndex` 重建 fjall 索引并打印写入的 bangumi-id 与标题键数量；`Search` 按标题匹配字符串（走 title 索引，没索引时自动退回扫文件）；`ExportState` / `ImportState` 与 SQLite 互导 `state`
 - [game.rs](src/bin/cli/game.rs) — Game 子命令，`AddWithSteam` 接收 Steam appid，创建 tokio runtime 调用 `game_command::add_with_steam`，成功后打印游戏标题与时长/成就；`Verify` 尚未实现
 
 **使用示例**:
 ```bash
 aki-cli anime add-with-bangumi 475354
 aki-cli anime update-with-bangumi 475354
+aki-cli anime build-index                    # 重建 .aki/fjall-index/ 里的 bangumi-id 索引
+aki-cli anime search 物语 -l 5               # 按标题直接匹配，不需要先 build-index
 aki-cli anime export-state                  # 写到 database/anime-state.db
 aki-cli anime export-state -o /tmp/state.db # 或指定路径
 aki-cli anime import-state --dry-run        # 先看会改哪些
@@ -937,5 +975,5 @@ aki-cli (clap 解析命令)
 | `toml` | 配置文件解析 |
 | `anyhow` / `thiserror` | 错误处理 |
 | `sys-locale` | 系统语言环境检测 |
+| `fjall` | 番剧索引数据库（bangumi-id → meta.id 的键值索引） |
 | `rusqlite`（`bundled`） | 导出 state 到 SQLite；SQLite 源码随 crate 编译 |
-| `tantivy` | 全文搜索（已引入，尚未使用） |

@@ -1,6 +1,6 @@
 use std::io;
 
-use super::super::{Anime, SaveAnimeError, index::BangumiIdIndex};
+use super::super::{Anime, SaveAnimeError, index::AnimeIndex};
 use crate::source::bangumi::Subject;
 
 #[derive(Debug, thiserror::Error)]
@@ -27,8 +27,11 @@ pub async fn add_with_bangumi(
     anime
         .save_as_meta_id()
         .map_err(AddWithBangumiError::SaveAnime)?;
-    // 记入 bangumi-id 索引，让 update-with-bangumi 可以直接定位这条番剧。
-    let mut index = BangumiIdIndex::load();
-    index.set(bangumi_id, &anime.meta.id.id);
+    // 记入索引，让 update-with-bangumi 与 search 立刻能用。索引打不开时只打印
+    // 警告：它可以从数据目录重建，不该让添加本身失败。
+    if let Some(index) = AnimeIndex::open_or_warn() {
+        index.set_anime_index_or_warn(&anime);
+        index.flush_or_warn();
+    }
     Ok(anime)
 }

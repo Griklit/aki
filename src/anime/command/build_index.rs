@@ -1,24 +1,11 @@
-use super::super::{ANIME_CONTEXT, index};
+use super::super::index;
 
-#[derive(Debug, thiserror::Error)]
-pub enum BuildIndexErropr {
-    #[error("build tantivy index error")]
-    Tantivy(#[source] index::BuildTantivyIndexError),
-}
+pub use super::super::index::BuildResult;
 
-pub struct BuildIndexResult {
-    /// 全文索引写入的番剧数量
-    pub animes: usize,
-    /// bangumi-id 索引写入的映射数量
-    pub bangumi_ids: usize,
-}
-
-pub fn build_index() -> Result<BuildIndexResult, BuildIndexErropr> {
-    // bangumi-id 索引很便宜，先建好，这样即使随后的全文索引失败它也已经可用。
-    let bangumi_ids = index::build_bangumi_id_index();
-    let animes = index::build_tantivy_index(&ANIME_CONTEXT).map_err(BuildIndexErropr::Tantivy)?;
-    Ok(BuildIndexResult {
-        animes,
-        bangumi_ids,
-    })
+/// 重建番剧索引（`{anime_data_path}/.aki/fjall-index/`）。
+///
+/// 索引本身是可以随时从数据目录重建的缓存，因此这里不需要先清空整个数据库：
+/// [`index::Index::build`] 会先清空两个 keyspace 再整体写入。
+pub fn build_index() -> Result<BuildResult, fjall::Error> {
+    index::AnimeIndex::build()
 }

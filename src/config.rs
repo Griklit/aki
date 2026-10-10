@@ -138,19 +138,10 @@ impl Config {
         PATH.get_or_init(|| utils::path::normalize(self.root.join(&self.anime.path)))
     }
 
-    pub fn anime_tantivy_index_path(&self) -> &'static Path {
-        static PATH: OnceLock<PathBuf> = OnceLock::new();
-        PATH.get_or_init(|| self.anime_data_path().join(".aki/tantivy-index"))
-    }
-
+    /// 番剧索引数据库目录（fjall），见 [`crate::anime::index`]。
     pub fn anime_fjall_index_path(&self) -> &'static Path {
         static PATH: OnceLock<PathBuf> = OnceLock::new();
         PATH.get_or_init(|| self.anime_data_path().join(".aki/fjall-index"))
-    }
-
-    pub fn anime_bangumi_id_index_path(&self) -> &'static Path {
-        static PATH: OnceLock<PathBuf> = OnceLock::new();
-        PATH.get_or_init(|| self.anime_data_path().join(".aki/bangumi-id-index.json"))
     }
 
     pub fn bangumi_subject_path(&self) -> &'static Path {

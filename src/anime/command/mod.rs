@@ -7,7 +7,7 @@ mod update_with_bangumi;
 mod verify;
 
 pub use add_with_bangumi::{AddWithBangumiError, add_with_bangumi};
-pub use build_index::{BuildIndexResult, build_index};
+pub use build_index::{BuildResult, build_index};
 pub use export_state::{ExportStateError, export_state};
 pub use import_state::{ImportStateError, ImportStateResult, import_state};
 pub use search::search;
