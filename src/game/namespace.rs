@@ -1,4 +1,4 @@
-use crate::{CONFIG, Namespace};
+use crate::{CONFIG, Namespace, utils};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -15,6 +15,6 @@ impl Namespace for GameNamespace {
     }
 
     fn data_path() -> PathBuf {
-        CONFIG.game_data_path().to_path_buf()
+        utils::path::normalize(CONFIG.root.join(&CONFIG.game.path))
     }
 }

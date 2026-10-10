@@ -1,10 +1,8 @@
-use crate::utils;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
-use std::sync::OnceLock;
 
 pub static CONFIG: LazyLock<Config> = LazyLock::new(|| {
     #[cfg(debug_assertions)]
@@ -129,6 +127,17 @@ impl Default for ConfigSteam {
     }
 }
 
+/// 数据来源（Bangumi / Steam）的落盘位置与接口配置。
+///
+/// 这不是某个领域的子模块：`anime` 与 `game` 都只是这些来源的消费方。
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct ConfigSource {
+    #[serde(default)]
+    pub bangumi: ConfigBangumi,
+    #[serde(default)]
+    pub steam: ConfigSteam,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default, skip)]
@@ -138,9 +147,7 @@ pub struct Config {
     pub anime: ConfigAnime,
     pub game: ConfigGame,
     #[serde(default)]
-    pub bangumi: ConfigBangumi,
-    #[serde(default)]
-    pub steam: ConfigSteam,
+    pub source: ConfigSource,
 }
 
 impl Config {
@@ -167,60 +174,12 @@ impl Config {
         path.push("aki.toml");
         Self::load(&path)
     }
-
-    pub fn anime_data_path(&self) -> &'static Path {
-        static PATH: OnceLock<PathBuf> = OnceLock::new();
-        PATH.get_or_init(|| utils::path::normalize(self.root.join(&self.anime.path)))
-    }
-
-    /// 番剧索引数据库目录（fjall），见 [`crate::anime::index`]。
-    pub fn anime_fjall_index_path(&self) -> &'static Path {
-        static PATH: OnceLock<PathBuf> = OnceLock::new();
-        PATH.get_or_init(|| self.anime_data_path().join(".aki/fjall-index"))
-    }
-
-    /// `export-state` 没指定 `--output` 时写出的数据库文件。
-    pub fn anime_state_db_path(&self) -> &'static Path {
-        static PATH: OnceLock<PathBuf> = OnceLock::new();
-        PATH.get_or_init(|| self.root.join("anime-state.db"))
-    }
-
-    pub fn game_data_path(&self) -> &'static Path {
-        static PATH: OnceLock<PathBuf> = OnceLock::new();
-        PATH.get_or_init(|| utils::path::normalize(self.root.join(&self.game.path)))
-    }
-
-    /// 按命名空间 `kind()` 取数据目录，供 `Namespace::data_path()` 的默认实现使用。
-    ///
-    /// 每个目录单独缓存，并各自归一化路径；未登记的命名空间退回
-    /// `{root}/{kind}`。
-    pub fn namespace_data_path(&self, kind: &str) -> PathBuf {
-        static PATHS: OnceLock<std::sync::Mutex<std::collections::BTreeMap<String, PathBuf>>> =
-            OnceLock::new();
-        let paths = PATHS.get_or_init(|| std::sync::Mutex::new(std::collections::BTreeMap::new()));
-        let mut paths = paths.lock().expect("namespace data path cache poisoned");
-        paths
-            .entry(kind.to_string())
-            .or_insert_with(|| match kind {
-                "anime" => self.anime_data_path().to_path_buf(),
-                "game" => self.game_data_path().to_path_buf(),
-                // 数据来源（Bangumi / Steam）的目录由 `[source.*] path` 决定。
-                "bangumi" => self.source_data_path(&self.bangumi.path),
-                "steam" => self.source_data_path(&self.steam.path),
-                other => utils::path::normalize(self.root.join(other)),
-            })
-            .clone()
-    }
-
-    /// `[source.*] path` 解析成绝对路径。
-    fn source_data_path(&self, path: &Path) -> PathBuf {
-        utils::path::normalize(self.root.join(path))
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Namespace;
 
     /// 当前工作目录是进程级的：改它的测试必须串行执行、并在结束（含 panic）后还原，
     /// 否则 `load_config_with_work_dir` 与 `load_config_with_work_dir_panic` 会互相
@@ -279,7 +238,8 @@ mod tests {
         let _work_dir = WorkDir::switch_to(Path::new(env!("CARGO_MANIFEST_DIR")).join("database"));
         let config = Config::load_with_current_dir().unwrap();
         dbg!(&config);
-        dbg!(config.anime_data_path());
+        // 路径不再挂在 `Config` 上，由各命名空间从 `root` 自己算。
+        dbg!(crate::anime::AnimeNamespace::data_path());
     }
 
     /// 空目录里没有 `aki.toml`：`Config::load_with_current_dir` 应当报

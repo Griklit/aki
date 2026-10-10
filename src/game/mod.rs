@@ -12,7 +12,7 @@ mod namespace;
 pub mod state;
 pub mod steam;
 
-use crate::{CONFIG, Language, Meta, MetaId};
+use crate::{CONFIG, Language, Meta, MetaId, Namespace};
 pub use info::{ExternalScore, GameInfo, GameInfoInternationalization, GamePlatform, GameRelease};
 pub use namespace::GameNamespace;
 use serde::{Deserialize, Serialize};
@@ -145,7 +145,7 @@ impl Game {
 
     /// 与 [`Self::iter_all`] 相同，但同时给出每条数据是从哪个文件读出来的。
     pub fn iter_all_with_path() -> impl Iterator<Item = (PathBuf, Self)> {
-        let game_dir = CONFIG.game_data_path();
+        let game_dir = GameNamespace::data_path();
         std::fs::read_dir(game_dir)
             .ok()
             .into_iter()

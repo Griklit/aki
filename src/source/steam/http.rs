@@ -111,7 +111,7 @@ pub async fn request_with_raw<E: Endpoint>(
     endpoint: &E,
 ) -> Result<(Option<String>, E::Response), SteamRequestError> {
     endpoint.validate()?;
-    let steam_config = &CONFIG.steam;
+    let steam_config = &CONFIG.source.steam;
     let mut params = endpoint.params();
     if endpoint.needs_api_key() {
         if steam_config.api_key.is_empty() {

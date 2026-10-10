@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 use std::{fs, io};
 
-use super::super::{Anime, LoadAnimeError};
-use crate::CONFIG;
+use super::super::{Anime, AnimeNamespace, LoadAnimeError};
+use crate::Namespace;
 
 #[derive(Debug, thiserror::Error)]
 pub enum VerifyAnimeFileError {
@@ -18,11 +18,12 @@ pub struct InvaildAnimeFile {
 
 pub fn verify() -> Result<(usize, Vec<InvaildAnimeFile>), io::Error> {
     let mut errors = Vec::new();
-    let file_iter = fs::read_dir(CONFIG.anime_data_path())?.flatten();
+    let file_iter = fs::read_dir(AnimeNamespace::data_path())?.flatten();
     let mut count = 0;
     for entry in file_iter {
         let path = entry.path();
-        if path.extension().is_none_or(|ext| ext.eq("json")) {
+        // 只看数据文件；别的东西（`.aki/` 目录等）跳过。
+        if path.extension().is_none_or(|ext| ext != "json") {
             continue;
         }
         count += 1;

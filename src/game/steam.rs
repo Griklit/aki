@@ -12,7 +12,7 @@ use crate::source::steam::{
     AppDetails, AppDetailsEndpoint, Endpoint, SteamNamespace, SteamRawStore, SteamRequestError,
     model, request_with_raw,
 };
-use crate::{Language, Meta, Namespace};
+use crate::{Language, Meta};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -28,7 +28,7 @@ pub fn app_details_name(appid: u32) -> String {
 /// 该 appid 的原始响应文件路径（文件可能还不存在）。
 #[must_use]
 pub fn app_details_path(appid: u32) -> PathBuf {
-    SteamNamespace::json_path(&app_details_name(appid))
+    SteamNamespace::saved_path(&app_details_name(appid))
 }
 
 /// 把 Steam 的脏日期字段转成 [`GameRelease`]。
@@ -98,7 +98,7 @@ pub async fn request_app_details(
     appid: u32,
 ) -> Result<AppDetailsRawStore, SteamRequestError> {
     let (raw, _app) = request_with_raw(client, &AppDetailsEndpoint::new(appid)).await?;
-    let steam_config = &crate::CONFIG.steam;
+    let steam_config = &crate::CONFIG.source.steam;
     let url = format!(
         "{}/api/appdetails?appids={}&l={}&cc={}",
         steam_config.store_api, appid, steam_config.language, steam_config.country

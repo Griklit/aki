@@ -1,4 +1,5 @@
-use crate::Namespace;
+use crate::{CONFIG, Namespace, utils};
+use std::path::PathBuf;
 
 /// Steam 原始响应的命名空间：`[source.steam] path`（默认 `database/source/steam`）。
 ///
@@ -14,5 +15,21 @@ impl Namespace for SteamNamespace {
 
     fn kind() -> &'static str {
         "steam"
+    }
+
+    fn data_path() -> PathBuf {
+        let config = &*CONFIG;
+        utils::path::normalize(config.root.join(&config.source.steam.path))
+    }
+}
+
+impl SteamNamespace {
+    /// 某个存放名对应的原始响应文件：`<data_path>/<存放名>.json`。
+    ///
+    /// 存放名是 Steam 自己的约定（`appdetails/{appid}`、`owned-games`），
+    /// 所以由这里给出，而不是 trait 上的通用 `json_path()`。
+    #[must_use]
+    pub fn saved_path(name: &str) -> PathBuf {
+        Self::data_path().join(name).with_extension("json")
     }
 }

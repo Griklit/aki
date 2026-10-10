@@ -1,4 +1,5 @@
 use super::namespace::{Namespace, deserialize_namespace, serialize_namespace};
+use crate::utils;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -29,19 +30,18 @@ impl<T: Namespace> MetaId<T> {
         }
     }
 
-    /// 文件名（含扩展名），由 `id` 经文件名安全化得到。
+    /// 文件名（含扩展名）：`id` 经文件名安全化后加 `.json`。
+    ///
+    /// 安全化也保证了它只是一段文件名——`id` 里带 `/` 也不会变成子目录。
     #[must_use]
     pub fn json_filename(&self) -> String {
-        T::json_path(&self.id).file_name().map_or_else(
-            || String::from("unnamed.json"),
-            |v| v.to_string_lossy().into(),
-        )
+        format!("{}.json", utils::path::sanitize_name(&self.id))
     }
 
-    /// 数据文件路径，目录与命名规则均由命名空间 `T` 决定。
+    /// 数据文件路径：`{T::data_path()}/{安全化后的 id}.json`。
     #[must_use]
     pub fn json_data_path(&self) -> PathBuf {
-        T::json_path(&self.id)
+        T::data_path().join(self.json_filename())
     }
 }
 

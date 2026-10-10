@@ -6,7 +6,7 @@ mod score;
 mod state;
 
 use crate::source::bangumi::Subject;
-use crate::{CONFIG, Language, Meta, MetaId};
+use crate::{CONFIG, Language, Meta, MetaId, Namespace};
 pub use info::{AnimeInfo, AnimeInfoInternationalization};
 pub use namespace::AnimeNamespace;
 pub use score::AnimeScore;
@@ -146,7 +146,7 @@ impl Anime {
     /// 需要原地改写这条数据的命令用它，才能区分「文件就在规范路径上」和
     /// 「文件名与 `meta.id` 不一致」这两种情况。
     pub fn iter_all_with_path() -> impl Iterator<Item = (PathBuf, Anime)> {
-        let anime_dir = CONFIG.anime_data_path();
+        let anime_dir = AnimeNamespace::data_path();
         std::fs::read_dir(anime_dir)
             .ok()
             .into_iter()

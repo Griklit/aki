@@ -1,4 +1,4 @@
-//! 番剧索引：`{anime_data_path}/.aki/fjall-index/` 下的一个 fjall 数据库。
+//! 番剧索引：`root/{anime.path}/.aki/fjall-index/` 下的一个 fjall 数据库。
 //!
 //! 里面只有两个 keyspace，每个都是「键 → 一个 `meta.id`」的平表，没有倒排、
 //! 没有分词：
@@ -18,8 +18,7 @@ use std::path::Path;
 
 use fjall::{Database, Keyspace, KeyspaceCreateOptions};
 
-use super::super::Anime;
-use crate::CONFIG;
+use super::super::{Anime, AnimeNamespace};
 
 /// `bangumi_id` → `meta.id` 的 keyspace。
 const BANGUMI_ID_TO_META_ID_KEYSPACE: &str = "bangumi-id-to-meta-id";
@@ -63,19 +62,18 @@ impl AnimeIndex {
         })
     }
 
-    /// 打开默认位置的索引（`{anime_data_path}/.aki/fjall-index/`），失败时打印
-    /// 警告并返回 `None`。
+    /// 打开默认位置的索引（[`AnimeNamespace::index_path()`]），失败时打印警告并
+    /// 返回 `None`。
     ///
     /// 索引是可重建的缓存，不该因为它打不开就让真正的增删改失败。
     #[must_use]
     pub fn open_or_warn() -> Option<Self> {
-        let path = CONFIG.anime_fjall_index_path();
-        match Self::open(path) {
+        match Self::open(AnimeNamespace::index_path()) {
             Ok(index) => Some(index),
             Err(error) => {
                 eprintln!(
                     "[?] failed to open anime index '{}': {error}",
-                    path.display()
+                    AnimeNamespace::index_path().display()
                 );
                 None
             }
@@ -165,7 +163,7 @@ impl AnimeIndex {
     /// 索引打不开、清空或写入失败时返回错误——这是 `build-index` 显式要求做的事，
     /// 不该只打印一行警告就当作成功。
     pub fn build() -> Result<BuildResult, fjall::Error> {
-        let index = Self::open(CONFIG.anime_fjall_index_path())?;
+        let index = Self::open(AnimeNamespace::index_path())?;
         index.bangumi_id_to_meta_id.clear()?;
         index.title_to_meta_id.clear()?;
 

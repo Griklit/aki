@@ -4,7 +4,6 @@
 use super::super::Game;
 use super::super::state::{fill_from_steam, minutes_to_seconds};
 use super::super::steam;
-use crate::Namespace;
 use crate::source::steam::{
     OwnedGame, OwnedGamesEndpoint, SteamNamespace, SteamRawStore, SteamRequestError,
     request_with_raw,
@@ -237,7 +236,7 @@ fn save_raw(raw: Option<String>) -> Result<PathBuf, SyncOwnedGamesError> {
 /// 原始响应文件路径（文件可能还不存在）。
 #[must_use]
 pub fn owned_games_path() -> PathBuf {
-    SteamNamespace::json_path(OWNED_GAMES_NAME)
+    SteamNamespace::saved_path(OWNED_GAMES_NAME)
 }
 
 /// `owned-games.json` 的外层形状：`{"response":{"game_count":n,"games":[…]}}`。
@@ -273,7 +272,7 @@ pub fn load_owned_games_raw() -> Result<Option<Vec<OwnedGame>>, SteamRequestErro
 }
 
 fn owned_games_url() -> String {
-    let steam = &crate::CONFIG.steam;
+    let steam = &crate::CONFIG.source.steam;
     format!(
         "{}/IPlayerService/GetOwnedGames/v1/?steamid={}",
         steam.api,

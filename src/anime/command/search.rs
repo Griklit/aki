@@ -2,8 +2,8 @@ use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use super::super::{Anime, MetaId, index::AnimeIndex};
-use crate::CONFIG;
+use super::super::{Anime, AnimeNamespace, MetaId, index::AnimeIndex};
+use crate::Namespace;
 
 /// 按标题匹配字符串，返回分数最高的前 `limit` 条。
 ///
@@ -20,7 +20,7 @@ pub fn search(query: &str, limit: usize) -> Vec<Anime> {
     }
     // 索引目录还不存在时直接扫文件：既不为了读一次标题去建一个空数据库，
     // 也不会把「没建索引」表现成「什么都没搜到」。
-    if CONFIG.anime_fjall_index_path().exists()
+    if AnimeNamespace::index_path().exists()
         && let Some(index) = AnimeIndex::open_or_warn()
         && let Some(hits) = search_index(&index, query, limit)
     {
@@ -59,7 +59,7 @@ fn search_index(index: &AnimeIndex, query: &str, limit: usize) -> Option<Vec<Ani
 fn search_files(query: &str, limit: usize) -> Vec<Anime> {
     let query = query.to_lowercase();
     let mut best: BTreeMap<String, f32> = BTreeMap::new();
-    for entry in std::fs::read_dir(CONFIG.anime_data_path())
+    for entry in std::fs::read_dir(AnimeNamespace::data_path())
         .ok()
         .into_iter()
         .flatten()

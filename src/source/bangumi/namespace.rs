@@ -1,4 +1,4 @@
-use crate::Namespace;
+use crate::{CONFIG, Namespace, utils};
 use std::path::PathBuf;
 
 /// Bangumi 原始数据的命名空间：`[source.bangumi] path`（默认 `database/source/bangumi`）。
@@ -16,12 +16,25 @@ impl Namespace for BangumiNamespace {
     fn kind() -> &'static str {
         "bangumi"
     }
+
+    fn data_path() -> PathBuf {
+        let config = &*CONFIG;
+        utils::path::normalize(config.root.join(&config.source.bangumi.path))
+    }
 }
 
 impl BangumiNamespace {
     /// 单条条目的原始响应路径：`<data_path>/subject/<id>.json`。
+    ///
+    /// `subject` 这个子目录是 Bangumi 自己的规则，所以放在这里而不是 trait 上。
     #[must_use]
     pub fn subject_path(subject_id: i64) -> PathBuf {
-        Self::file_path(format!("subject/{subject_id}")).with_extension("json")
+        Self::subject_dir().join(format!("{subject_id}.json"))
+    }
+
+    /// 条目原始响应的目录：`<data_path>/subject`。
+    #[must_use]
+    pub fn subject_dir() -> PathBuf {
+        Self::data_path().join("subject")
     }
 }

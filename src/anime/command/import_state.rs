@@ -5,8 +5,7 @@ use std::path::{Path, PathBuf};
 
 use rusqlite::Connection;
 
-use super::super::{Anime, AnimeScore, AnimeState, AnimeWatchStatus};
-use crate::CONFIG;
+use super::super::{Anime, AnimeNamespace, AnimeScore, AnimeState, AnimeWatchStatus};
 
 /// 校验失败时最多在错误里列出多少行，避免刷屏。
 const MAX_REPORTED_ISSUES: usize = 10;
@@ -59,7 +58,7 @@ FROM anime_state";
 
 /// 从数据库读回 `state` 并更新对应的番剧数据文件。
 ///
-/// `input` 为 `None` 时读 [`CONFIG.anime_state_db_path()`](crate::CONFIG)。
+/// `input` 为 `None` 时读 [`AnimeNamespace::state_db_path()`]。
 /// 只改 `state`，`info` / `i18n` / `meta` / `bangumi_id` 一律不碰；`state`
 /// 与文件里完全一致的条目会被跳过，不会白写一遍文件。
 ///
@@ -69,10 +68,7 @@ pub fn import_state(
     input: Option<&Path>,
     dry_run: bool,
 ) -> Result<ImportStateResult, ImportStateError> {
-    let path = input.map_or_else(
-        || CONFIG.anime_state_db_path().to_path_buf(),
-        Path::to_path_buf,
-    );
+    let path = input.map_or_else(AnimeNamespace::state_db_path, Path::to_path_buf);
     if !path.exists() {
         return Err(ImportStateError::NotFound(path));
     }

@@ -66,7 +66,7 @@ impl Endpoint for AppDetailsEndpoint {
     }
 
     fn params(&self) -> Vec<(&'static str, String)> {
-        let steam_config = &CONFIG.steam;
+        let steam_config = &CONFIG.source.steam;
         vec![
             ("appids", self.appid.to_string()),
             ("l", steam_config.language.clone()),
@@ -170,7 +170,7 @@ impl Endpoint for OwnedGamesEndpoint {
     }
 
     fn params(&self) -> Vec<(&'static str, String)> {
-        let Some(steam_id) = CONFIG.steam.steam_id.as_deref() else {
+        let Some(steam_id) = CONFIG.source.steam.steam_id.as_deref() else {
             return vec![("steamid", String::new())];
         };
         vec![
@@ -189,6 +189,7 @@ impl Endpoint for OwnedGamesEndpoint {
     /// 没配置 `SteamID` 就直接报错，而不是带空 `steamid` 去请求。
     fn validate(&self) -> Result<(), SteamRequestError> {
         if CONFIG
+            .source
             .steam
             .steam_id
             .as_deref()

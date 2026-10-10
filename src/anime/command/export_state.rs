@@ -4,8 +4,7 @@ use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, params};
 
-use super::super::Anime;
-use crate::CONFIG;
+use super::super::{Anime, AnimeNamespace};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ExportStateError {
@@ -44,16 +43,13 @@ INSERT INTO anime_state (
 
 /// 把全部番剧的 `state` 导出到 SQLite，返回（实际写入的文件, 行数）。
 ///
-/// `output` 为 `None` 时写到 [`CONFIG.anime_state_db_path()`](crate::CONFIG)。
+/// `output` 为 `None` 时写到 [`AnimeNamespace::state_db_path()`]。
 /// 每次运行都会重建 `anime_state` 表（`DROP TABLE IF EXISTS` + `CREATE`），
 /// 因此结果始终是当前状态的完整快照；库里其他表不受影响。
 ///
 /// 分数按原样导出，不做范围裁剪——数据超出了字段约定的 0~1 也能看出来。
 pub fn export_state(output: Option<&Path>) -> Result<(PathBuf, usize), ExportStateError> {
-    let path = output.map_or_else(
-        || CONFIG.anime_state_db_path().to_path_buf(),
-        Path::to_path_buf,
-    );
+    let path = output.map_or_else(AnimeNamespace::state_db_path, Path::to_path_buf);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(ExportStateError::CreateDir)?;
     }
