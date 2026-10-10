@@ -7,6 +7,7 @@ pub mod date;
 pub mod endpoints;
 pub mod http;
 pub mod model;
+mod namespace;
 pub mod store;
 
 pub use endpoints::{
@@ -14,4 +15,5 @@ pub use endpoints::{
 };
 pub use http::{Endpoint, SteamRequestError, parse_json, request, request_with_raw};
 pub use model::{AppDetails, AppType, OwnedGame, PlayerSummary};
-pub use store::{SteamNamespace, SteamRawStore};
+pub use namespace::SteamNamespace;
+pub use store::SteamRawStore;

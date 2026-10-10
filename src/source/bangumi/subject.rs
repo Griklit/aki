@@ -1,5 +1,6 @@
 use std::{fs::File, io};
 
+use super::BangumiNamespace;
 use crate::CONFIG;
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
@@ -162,10 +163,7 @@ pub struct Subject {
 
 impl Subject {
     pub fn save(&self) -> Result<(), io::Error> {
-        let path = CONFIG
-            .bangumi_subject_path()
-            .join(self.id.to_string())
-            .with_added_extension("json");
+        let path = BangumiNamespace::subject_path(self.id);
         let file = File::create(path)?;
         let writer = io::BufWriter::new(file);
         serde_json::to_writer_pretty(writer, self)?;
@@ -173,10 +171,7 @@ impl Subject {
     }
 
     pub fn load_with_id(id: i64) -> Result<Self, io::Error> {
-        let path = CONFIG
-            .bangumi_subject_path()
-            .join(id.to_string())
-            .with_extension("json");
+        let path = BangumiNamespace::subject_path(id);
         let file = File::open(path)?;
         let subject: Subject = serde_json::from_reader(file)?;
         Ok(subject)

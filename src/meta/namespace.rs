@@ -1,6 +1,6 @@
 use std::fs;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
@@ -47,11 +47,27 @@ pub trait Namespace {
         crate::CONFIG.namespace_data_path(Self::kind())
     }
 
+    /// 该命名空间里某个相对路径对应的文件：`{data_path}/{name}`。
+    ///
+    /// `name` 允许带目录层级（如 `appdetails/427520`），每一段都会做文件名安全化；
+    /// 目录层级用 [`PathBuf::join`] 拼，跨平台都得到原生路径（Windows 上不能把
+    /// 手写的 `/` 拼进已归一化的路径里）。只要单段文件名时不涉及任何子目录，
+    /// 行为与 `{data_path}/{sanitized_name}` 一致。
+    #[must_use]
+    fn file_path(name: impl AsRef<Path>) -> PathBuf {
+        let mut path = Self::data_path();
+        for part in name.as_ref().components() {
+            if let std::path::Component::Normal(part) = part {
+                path.push(sanitize_filename::sanitize(part.to_string_lossy()));
+            }
+        }
+        path
+    }
+
     /// 单条数据的 JSON 文件路径：`{data_path}/{name}.json`（目录会按需创建）。
     #[must_use]
     fn json_path(name: &str) -> PathBuf {
-        let path = sanitize_filename::sanitize(name);
-        Self::data_path().join(path).with_extension("json")
+        Self::file_path(name).with_extension("json")
     }
 
     /// 把 `bytes` 写到 `{data_path}/{name}.json`，覆盖已有文件。

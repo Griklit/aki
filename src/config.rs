@@ -57,12 +57,34 @@ pub struct ConfigAnime {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ConfigGame {
     pub path: PathBuf,
-    #[serde(default)]
-    pub steam: ConfigSteam,
 }
 
+/// Bangumi 原始数据的落盘位置。
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ConfigBangumi {
+    /// 相对于 [`Config::root`] 的目录，`Subject` 原始响应落在它的 `subject/` 下。
+    #[serde(default = "default_bangumi_path")]
+    pub path: PathBuf,
+}
+
+fn default_bangumi_path() -> PathBuf {
+    PathBuf::from("source/bangumi")
+}
+
+impl Default for ConfigBangumi {
+    fn default() -> Self {
+        Self {
+            path: default_bangumi_path(),
+        }
+    }
+}
+
+/// Steam 接口配置与原始数据的落盘位置。
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ConfigSteam {
+    /// 相对于 [`Config::root`] 的目录，原始响应就落在它下面。
+    #[serde(default = "default_steam_path")]
+    pub path: PathBuf,
     /// Steam Web API 密钥。留空则不发送，需要密钥的接口会直接报错。
     #[serde(default)]
     pub api_key: String,
@@ -81,6 +103,10 @@ pub struct ConfigSteam {
     pub store_api: String,
 }
 
+fn default_steam_path() -> PathBuf {
+    PathBuf::from("source/steam")
+}
+
 fn default_steam_language() -> String {
     "schinese".to_string()
 }
@@ -92,6 +118,7 @@ fn default_steam_country() -> String {
 impl Default for ConfigSteam {
     fn default() -> Self {
         Self {
+            path: default_steam_path(),
             api_key: String::new(),
             steam_id: None,
             language: default_steam_language(),
@@ -110,6 +137,10 @@ pub struct Config {
     pub locale: String,
     pub anime: ConfigAnime,
     pub game: ConfigGame,
+    #[serde(default)]
+    pub bangumi: ConfigBangumi,
+    #[serde(default)]
+    pub steam: ConfigSteam,
 }
 
 impl Config {
@@ -148,11 +179,6 @@ impl Config {
         PATH.get_or_init(|| self.anime_data_path().join(".aki/fjall-index"))
     }
 
-    pub fn bangumi_subject_path(&self) -> &'static Path {
-        static PATH: OnceLock<PathBuf> = OnceLock::new();
-        PATH.get_or_init(|| self.root.join("bangumi/subject"))
-    }
-
     /// `export-state` 没指定 `--output` 时写出的数据库文件。
     pub fn anime_state_db_path(&self) -> &'static Path {
         static PATH: OnceLock<PathBuf> = OnceLock::new();
@@ -162,12 +188,6 @@ impl Config {
     pub fn game_data_path(&self) -> &'static Path {
         static PATH: OnceLock<PathBuf> = OnceLock::new();
         PATH.get_or_init(|| utils::path::normalize(self.root.join(&self.game.path)))
-    }
-
-    /// Steam 原始响应（商店接口与 Web API）的落盘目录。
-    pub fn steam_data_path(&self) -> &'static Path {
-        static PATH: OnceLock<PathBuf> = OnceLock::new();
-        PATH.get_or_init(|| utils::path::normalize(self.root.join("steam")))
     }
 
     /// 按命名空间 `kind()` 取数据目录，供 `Namespace::data_path()` 的默认实现使用。
@@ -184,9 +204,17 @@ impl Config {
             .or_insert_with(|| match kind {
                 "anime" => self.anime_data_path().to_path_buf(),
                 "game" => self.game_data_path().to_path_buf(),
+                // 数据来源（Bangumi / Steam）的目录由 `[source.*] path` 决定。
+                "bangumi" => self.source_data_path(&self.bangumi.path),
+                "steam" => self.source_data_path(&self.steam.path),
                 other => utils::path::normalize(self.root.join(other)),
             })
             .clone()
+    }
+
+    /// `[source.*] path` 解析成绝对路径。
+    fn source_data_path(&self, path: &Path) -> PathBuf {
+        utils::path::normalize(self.root.join(path))
     }
 }
 

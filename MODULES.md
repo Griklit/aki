@@ -24,14 +24,17 @@ aki/
 │   │   └── [YYYY-MM-DD] 番名.json
 │   ├── game/               # 游戏 JSON 数据文件
 │   │   └── [日期] 游戏名.json
-│   └── steam/              # Steam 接口原始响应（appdetails{appid}.json 等）
+│   └── source/             # 数据来源的原始响应（[source.*] path 可改）
+│       ├── bangumi/subject/{id}.json    # Bangumi 条目原文
+│       └── steam/                       # Steam 响应原文
+│           ├── appdetails/{appid}.json
+│           └── owned-games.json
 ├── src/
 │   ├── lib.rs              # 库根：模块声明 + 公共 API 重导出
 │   ├── config.rs           # 配置加载模块
 │   ├── anime/              # 番剧领域模型（核心）
 │   ├── game/               # 游戏领域模型（与 anime 同构）
-│   ├── bangumi/            # Bangumi API 集成
-│   ├── steam/              # Steam 接口集成（与 bangumi 平级）
+│   ├── source/             # 数据来源集成：source::bangumi / source::steam
 │   ├── meta/               # 元数据/ID 管理
 │   ├── common/             # 共享基础类型
 │   ├── resource/           # 资源管理（封面等，WIP）
@@ -125,19 +128,28 @@ aki/
 
 ### 路径方法
 
-`Config` 集中提供各数据路径，均用 `OnceLock` 缓存：
+`Config` 只负责把配置里的相对路径解析成绝对路径；**某个路径属于谁，就由谁的 `Namespace` 去算**，不再在 `Config` 上挂一堆领域专属方法：
 
 | 方法 | 路径 |
 |------|------|
 | `anime_data_path()` | `{root}/{anime.path}` |
 | `anime_fjall_index_path()` | `{anime_data_path}/.aki/fjall-index`（索引数据库目录） |
 | `anime_state_db_path()` | `{root}/anime-state.db`（`export-state` 的默认输出） |
-| `bangumi_subject_path()` | `{root}/bangumi/subject` |
 | `game_data_path()` | `{root}/{game.path}` |
-| `steam_data_path()` | `{root}/steam`（Steam 原始响应） |
 | `namespace_data_path(kind)` | 按命名空间取目录，未登记的退回 `{root}/{kind}` |
 
-`namespace_data_path()` 是 [`MetaId`](src/meta/meta_id.rs) 找数据目录的入口：`MetaId::json_data_path()` 调用 `T::json_path(id)`，而 `Namespace::json_path` → `Namespace::data_path()`，所以路径规则完全由命名空间决定，`meta` 模块里不再有任何领域名字的硬编码。
+`namespace_data_path()` 是 [`MetaId`](src/meta/meta_id.rs) 找数据目录的入口：`MetaId::json_data_path()` 调用 `T::json_path(id)`，而 `Namespace::json_path` → `Namespace::file_path()` → `Namespace::data_path()`，所以路径规则完全由命名空间决定，`meta` 模块里不再有任何领域名字的硬编码。
+
+四个命名空间各自的目录来源：
+
+| 命名空间 | `kind()` | 目录 |
+|----------|----------|------|
+| [`AnimeNamespace`](src/anime/namespace.rs) | `anime` | `{root}/{anime.path}` |
+| [`GameNamespace`](src/game/namespace.rs) | `game` | `{root}/{game.path}` |
+| [`BangumiNamespace`](src/source/bangumi/namespace.rs) | `bangumi` | `{root}/{source.bangumi.path}`（默认 `source/bangumi`） |
+| [`SteamNamespace`](src/source/steam/namespace.rs) | `steam` | `{root}/{source.steam.path}`（默认 `source/steam`） |
+
+域内更细的路径也由各自的命名空间提供，例如 `BangumiNamespace::subject_path(id)` = `<data_path>/subject/<id>.json`。
 
 ### 配置文件格式 (`database/aki.toml`)
 
@@ -149,12 +161,20 @@ bangumi_api = "https://proxy.scalt.xyz/api.bgm.tv"
 [game]
 path = "./game"
 
-[game.steam]
+# 数据来源（Bangumi / Steam）的落盘位置与接口配置。
+# 这不是 game 的子模块：anime 与 game 都只是这些来源的消费方。
+[source.bangumi]
+path = "./source/bangumi"
+
+[source.steam]
+path = "./source/steam"
 api_key = "<Steam Web API key>"
 # steam_id = "7656119xxxxxxxxxx"
 language = "schinese"
 country = "cn"
 ```
+
+`[source.*]` 两段都可以整段省略：`path` 默认就是 `source/bangumi` / `source/steam`，`ConfigSource` 有 `Default`。`steam` 的密钥/语言/地区以前挂在 `[game.steam]` 下，现在移到 `[source.steam]`——Steam 是数据来源，不是 `game` 的子模块。
 
 ---
 
@@ -531,9 +551,9 @@ pub fn load_app_details(appid: u32) -> Result<AppDetails, SteamRequestError>;
 pub async fn add_with_steam(client: &reqwest::Client, appid: u32) -> Result<Game, AddWithSteamError>
 ```
 
-流程：请求 `store.steampowered.com/api/appdetails?appids={appid}&l={language}&cc={country}` → 原始响应写到 `database/steam/appdetails{appid}.json` → 解析成 `AppDetails` → 转成 `Game` → 写到 `database/game/[日期] 名称.json`。
+流程：请求 `store.steampowered.com/api/appdetails?appids={appid}&l={language}&cc={country}` → 原始响应写到 `database/source/steam/appdetails/{appid}.json` → 解析成 `AppDetails` → 转成 `Game` → 写到 `database/game/[日期] 名称.json`。
 
-> 文件名里的 `/` 会被 `sanitize-filename` 去掉，所以「存放名 `appdetails/{appid}`」落到磁盘是 `appdetails{appid}.json`。要真正分子目录的话，把存放名换成不含 `/` 的分段、或让 `Namespace::json_path` 支持多级路径即可。
+> 存放名是 `appdetails/{appid}`，由 [`Namespace::file_path()`](src/meta/namespace.rs) 逐段安全化后拼成 `{data_path}/appdetails/{appid}.json`——`appdetails` 现在是真正的子目录（以前那版 `json_path` 会把 `/` 安全化掉，于是所有响应都平铺在 `database/steam/` 下）。
 
 ### 3.5.6 命令：sync-owned-games (`src/game/command/sync_owned_games.rs`)
 
@@ -544,7 +564,7 @@ pub async fn sync_owned_games(client: &reqwest::Client, create_missing: bool)
 
 流程：
 
-1. 调 `IPlayerService/GetOwnedGames`（用配置里的 `steam_id` + `api_key`），整份响应原文写到 `database/steam/owned-games.json`
+1. 调 `IPlayerService/GetOwnedGames`（用配置里的 `source.steam.steam_id` + `source.steam.api_key`），整份响应原文写到 `database/source/steam/owned-games.json`
 2. 遍历数据目录，建 `steam_app_id → (meta.id, 文件路径)` 映射
 3. 对库里每个游戏：
    - **已有条目** → 只补 `played_seconds` / `last_played_at` 里为空的字段，真的改了才回写（`save_force`），没改不碰文件
@@ -601,21 +621,21 @@ pub async fn request<E: Endpoint>(client, endpoint: &E) -> Result<E::Response, S
 
 判据是「顶层是否存在数字 appid 键」；两种情况下都会校验 `steam_appid` 与请求一致（不一致报 `ResponseAppIdMismatch`），`success: false` 报 `AppNotFound`。
 
-### 3.6.3 原始响应落盘 (`src/steam/store.rs`)
+### 3.6.3 原始响应落盘 (`src/source/steam/store.rs`)
 
-`SteamNamespace` 把 `database/steam` 注册成一个命名空间，于是原始数据可以复用同一套路径规则：
+`SteamNamespace`（[src/source/steam/namespace.rs](src/source/steam/namespace.rs)）把 `[source.steam] path` 注册成一个命名空间，于是原始数据可以复用同一套路径规则：
 
 ```rust
 pub struct SteamRawStore<T> { pub url: String, pub raw: String, /* marker */ }
 
 impl<T> SteamRawStore<T> {
-    pub fn save_named(&self, name: &str) -> Result<PathBuf, io::Error>;  // database/steam/{name}.json
+    pub fn save_named(&self, name: &str) -> Result<PathBuf, io::Error>;  // {data_path}/{name}.json
     pub fn load_named(name: &str) -> Result<String, io::Error>;
     pub fn load_path(path) -> Result<String, io::Error>;
 }
 ```
 
-`appdetails` 的存放名是 `appdetails{appid}`（`/` 被文件名安全化去掉），因此文件落在 `database/steam/appdetails{appid}.json`。里面存的是**响应原文**——字段顺序、缩进、外壳都保持原样，`serde_json` 只用于读取，不参与写盘；和 Bangumi 存 `Subject` 原样响应同理：字段解析错了可以离线重来，补字段也不用重新打接口。
+`appdetails` 的存放名是 `appdetails/{appid}`，因此文件落在 `database/source/steam/appdetails/{appid}.json`；`owned-games` 落在 `database/source/steam/owned-games.json`。里面存的是**响应原文**——字段顺序、缩进、外壳都保持原样，`serde_json` 只用于读取、不参与写盘；`save_named` 写的就是 `SteamRawStore::raw` 那串文本本身，和 Bangumi 存 `Subject` 原样响应同理：字段解析错了可以离线重来，补字段也不用重新打接口。
 
 ### 3.6.4 脏日期解析 (`src/steam/date.rs`)
 
@@ -627,15 +647,15 @@ impl<T> SteamRawStore<T> {
 
 ---
 
-## 四、Bangumi API 集成 (`src/bangumi/`)
+## 四、Bangumi API 集成 (`src/source/bangumi/`)
 
-**目录**: [src/bangumi/](src/bangumi/)
+**目录**: [src/source/bangumi/](src/source/bangumi/)
 
 **功能**: 封装 Bangumi API v0 的条目查询。
 
-### 4.1 Subject (`src/bangumi/subject.rs`)
+### 4.1 Subject (`src/source/bangumi/subject.rs`)
 
-**文件**: [src/bangumi/subject.rs](src/bangumi/subject.rs)
+**文件**: [src/source/bangumi/subject.rs](src/source/bangumi/subject.rs)
 
 **功能**: Bangumi API `/v0/subjects/{id}` 返回的完整数据结构。
 
@@ -653,9 +673,16 @@ impl<T> SteamRawStore<T> {
 
 **方法**:
 - `request_with_id(client, id)` — 异步请求 Bangumi API，获取指定 ID 的条目
+- `save()` / `load_with_id(id)` — 原始响应落到 / 读自 `BangumiNamespace::subject_path(id)`
 - `r#type_enumed()` — 将数字类型转为 `Type` 枚举
 
 **示例数据**: `subject-example.json` 包含一条完整的 Bangumi API 响应样本，用于测试。
+
+### 4.2 BangumiNamespace (`src/source/bangumi/namespace.rs`)
+
+**文件**: [src/source/bangumi/namespace.rs](src/source/bangumi/namespace.rs)
+
+**功能**: 把 `[source.bangumi] path`（默认 `database/source/bangumi`）注册成命名空间 `"bangumi"`，并提供域内路径：`subject_path(id)` = `<data_path>/subject/<id>.json`。`Subject::save` / `load_with_id` 只调它，不再直接用 `CONFIG` 拼路径。
 
 ---
 
@@ -713,14 +740,17 @@ pub struct MetaId<T: Namespace> {
 ```rust
 pub trait Namespace {
     fn new() -> Self;
-    fn kind() -> &'static str;                 // 如 "anime"
-    fn data_path() -> PathBuf;                 // 如 database/anime，默认走 CONFIG
-    fn json_path(name: &str) -> PathBuf;       // {data_path}/{name}.json
+    fn kind() -> &'static str;                        // 如 "anime"
+    fn data_path() -> PathBuf;                        // 如 database/anime，默认走 CONFIG
+    fn file_path(name: impl AsRef<Path>) -> PathBuf;  // {data_path}/{name}，逐段做文件名安全化
+    fn json_path(name: &str) -> PathBuf;              // {data_path}/{name}.json
     fn save_json(name: &str, bytes: &[u8]) -> Result<PathBuf, io::Error>;
 }
 ```
 
-这是「路径由领域自己决定」的落点：`MetaId::json_data_path()` 只调 `T::json_path()`，`meta` 模块里不再出现 `anime` 之类的具体名字。新增一个领域（或像 `steam` 这样的原始数据目录）只需要实现 `data_path()`：由配置决定的走 `CONFIG.namespace_data_path(kind)`，特殊的直接指定目录（`AnimeNamespace`、`GameNamespace`、`SteamNamespace` 都覆盖了它）。
+这是「路径由领域自己决定」的落点：`MetaId::json_data_path()` 只调 `T::json_path()`，`meta` 模块里不再出现 `anime` 之类的具体名字。新增一个领域（或像 `bangumi` / `steam` 这样的数据来源目录）只需要实现 `kind()`：目录由配置决定的走 `CONFIG.namespace_data_path(kind)`，特殊的（`AnimeNamespace`、`GameNamespace`）覆盖 `data_path()` 直接指定。
+
+`file_path()` 支持多级相对路径（`appdetails/427520`）：每一段单独做文件名安全化，再用 `PathBuf::join` 拼起来，所以 Windows 上拿到的仍是原生路径；单段文件名时的行为与旧实现完全一致。`BangumiNamespace::subject_path()` 就是 `file_path("subject/{id}")` + `.json`。
 
 同时包含序列化/反序列化辅助函数，确保命名空间字符串在序列化时一致。
 
@@ -932,8 +962,10 @@ aki-cli (clap 解析命令)
     │
     ├─ anime_command::add_with_bangumi(bangumi_id)
     │   │
-    │   ├── Bangumi API ◄── bangumi::Subject::request_with_id()
+    │   ├── Bangumi API ◄── source::bangumi::Subject::request_with_id()
     │   │   返回 JSON → 反序列化为 Subject
+    │   │   同时 Subject::save() → BangumiNamespace::subject_path(id)
+    │   │                        → database/source/bangumi/subject/{id}.json（响应原文）
     │   │
     │   ├── Anime::from(subject)   ─── 自动语言检测 + 国际化填充
     │   │
@@ -945,10 +977,10 @@ aki-cli (clap 解析命令)
     │
     └─ game_command::add_with_steam(appid)
         │
-        ├── steam::request(AppDetailsEndpoint) ◄── store.steampowered.com/api/appdetails
+        ├── source::steam::request(AppDetailsEndpoint) ◄── store.steampowered.com/api/appdetails
         │   │
         │   ├── SteamRawStore::save_named("appdetails/{appid}")
-        │   │    → database/steam/appdetails{appid}.json（响应原文先落盘）
+        │   │    → database/source/steam/appdetails/{appid}.json（响应原文先落盘）
         │   │
         │   └── AppDetailsEndpoint::parse() → AppDetails
         │
@@ -961,7 +993,7 @@ aki-cli (clap 解析命令)
                   → database/game/[日期前缀] 游戏名.json
 ```
 
-两个领域的落盘路径都只经过 `Namespace` 提供的静态方法，因此 `meta` 模块与具体领域完全解耦；`steam` 原始响应只是多注册了一个 `SteamNamespace`。
+所有落盘路径都只经过 `Namespace` 提供的静态方法（`data_path()` 定根目录、`file_path()` 拼相对路径），因此 `meta` 模块与具体领域完全解耦；Bangumi / Steam 的原始响应各自多注册了一个命名空间，目录由 `[source.*] path` 决定。
 
 ## 十一、日志约定
 
