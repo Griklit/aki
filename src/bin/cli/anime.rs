@@ -25,9 +25,14 @@ pub struct UpdateWithBangumi {
 pub struct BuildIndex;
 
 #[derive(Args)]
+#[command(group(clap::ArgGroup::new("what").required(true).multiple(true)))]
 pub struct Search {
     /// 检索关键词（匹配标题）。
-    query: String,
+    #[arg(group = "what")]
+    query: Option<String>,
+    /// 按标签筛选，可重复给出（多个标签之间是「且」）
+    #[arg(long, group = "what")]
+    tag: Vec<String>,
     /// 返回结果数量上限。
     #[arg(short, long, default_value = "16")]
     limit: usize,
@@ -59,9 +64,9 @@ pub enum AnimeSubCommands {
     AddWithBangumi(AddWithBangumi),
     /// 按 Bangumi 条目 ID 刷新动画数据（默认用本地缓存的原始响应，--refresh 才重新拉取；不改动 state）。
     UpdateWithBangumi(UpdateWithBangumi),
-    /// 重建动画索引（fjall：bangumi-id 与 title 两个 keyspace）。
+    /// 重建动画索引（fjall：bangumi-id、title 与 tag 三个 keyspace）。
     BuildIndex(BuildIndex),
-    /// 按标题检索动画：走 title 索引，索引未建时退回扫数据文件。
+    /// 按标题检索动画：走 title 索引，索引未建时退回扫数据文件；--tag 可按标签筛选（多个标签是「且」，可只给标签）。
     Search(Search),
     /// 把所有动画的 state 导出到 SQLite 文件。
     ExportState(ExportState),
@@ -97,12 +102,17 @@ impl AnimeSubCommands {
             Self::BuildIndex(_) => {
                 let result = anime_command::build_index()?;
                 Ok(Some(format!(
-                    "indexed {} bangumi ids and {} titles",
-                    result.bangumi_id_to_meta_id, result.title_to_meta_id
+                    "indexed {} bangumi ids, {} titles and {} tags",
+                    result.bangumi_id_to_meta_id, result.title_to_meta_id, result.tag_to_meta_id
                 )))
             }
             Self::Search(args) => {
-                let animes = anime_command::search(&args.query, args.limit, args.verify_index);
+                let animes = anime_command::search(
+                    args.query.as_deref().unwrap_or_default(),
+                    &args.tag,
+                    args.limit,
+                    args.verify_index,
+                );
                 Ok(Some(
                     animes
                         .into_iter()

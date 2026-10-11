@@ -375,23 +375,27 @@ pub async fn update_with_bangumi(client: &reqwest::Client, bangumi_id: i64, refr
 
 **目录**: [src/anime/index/](src/anime/index/)
 
-索引就是 `root/{anime.path}/.aki/fjall-index/`（见 [`AnimeNamespace::index_path()`](src/anime/namespace.rs)）下的一个 fjall 数据库，随时可以删除并从数据目录重建。里面有**两个平表 keyspace**，每个都是「键 → 一个 `meta.id`」，没有倒排、没有分词：
+索引就是 `root/{anime.path}/.aki/fjall-index/`（见 [`AnimeNamespace::index_path()`](src/anime/namespace.rs)）下的一个 fjall 数据库，随时可以删除并从数据目录重建。里面是**几个平表 keyspace**，没有倒排、没有分词：
 
 | keyspace | 键 | 值 | 用途 |
 |----------|----|----|------|
 | `bangumi-id-to-meta-id` | `bangumi_id`（`i64::to_be_bytes`） | `meta.id` | `update-with-bangumi` 直接定位数据文件 |
 | `title-to-meta-id` | 小写化的标题 | `meta.id` | `search` 按标题找番剧 |
+| `tag-to-meta-id` | 小写化的标签 + `\x1f` + `meta.id` | `meta.id` | `search --tag` 按标签找番剧 |
 
 整个模块只有 `fjall.rs` 一个文件（[src/anime/index/fjall.rs](src/anime/index/fjall.rs)）。
 
 ```rust
-pub struct AnimeIndex { /* Database + 两个 Keyspace */ }
+pub struct AnimeIndex { /* Database + 三个 Keyspace */ }
 impl AnimeIndex {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, fjall::Error>;
     pub fn open_or_warn() -> Option<Self>;              // 打不开就打印警告并退化成「没有索引」
     pub fn set_bangumi_id_to_meta_id(&self, bangumi_id: i64, meta_id: &str) -> Result<(), fjall::Error>;
     pub fn get_meta_id_of_bangumi_id(&self, bangumi_id: i64) -> Option<String>;
     pub fn set_title_to_meta_id(&self, title: &str, meta_id: &str) -> Result<(), fjall::Error>;
+    pub fn set_tag_to_meta_id(&self, tag: &str, meta_id: &str) -> Result<(), fjall::Error>;
+    pub fn meta_ids_of_tag(&self, tag: &str) -> Vec<String>;      // 扫这个标签的键前缀
+    pub fn has_tag_entries(&self) -> bool;                        // 区分「真没有这个标签」与「索引是加标签之前建的」
     pub fn set_anime_index(&self, anime: &Anime) -> Result<(), Vec<(&'static str, fjall::Error)>>;
     pub fn set_anime_index_or_warn(&self, anime: &Anime);   // 逐个 keyspace 打印失败原因
     pub fn title_entries(&self) -> impl Iterator<Item = (String, String)>;  // (小写标题, meta.id)
@@ -402,17 +406,19 @@ impl AnimeIndex {
 pub struct BuildResult {
     pub bangumi_id_to_meta_id: usize,
     pub title_to_meta_id: usize,
+    pub tag_to_meta_id: usize,
     pub errors: Vec<fjall::Error>,   // 单条写入失败不会中断整体重建
 }
 ```
 
 - 键值都按 UTF-8 存（`meta.id` 原样、`bangumi_id` 用大端字节），取出即可读、不依赖 serde
 - 一条番剧有几个标题（**原名 + 各语言翻译，已去重**）就在 `title-to-meta-id` 里占几个键，见 [`Anime::all_titles`]——同一部番的原名与某个译名一字不差时只算一个（否则同一把键会被写两次，`build-index` 报的标题数也虚高）；标题键统一小写、查询也小写化，因此大小写不敏感。空标题会被 `set_title_to_meta_id` 跳过——fjall 不接受空键
-- 打开数据库会**独占目录**，同一目录在同一进程里只应存在一个 `AnimeIndex` 实例，因此各命令都是用完即弃
+- **标签的键里带上 `meta.id`**：标题是「一个键对一个条目」，而标签天然是「一个标签对多个条目」（624 部番 ≈ 18685 个 `(标签, meta.id)` 对），所以键是 `标签\x1fmeta.id`——查一个标签就是 `prefix()` 扫它自己那一段，写入也天然幂等（同一个 `(标签, meta.id)` 重复写只是覆盖），不用「读出来、改一改、写回去」。分隔符用 U+001F，标签与 `meta.id` 里都不会有它；空标签同样跳过
+- 打开数据库会**独占目录**，同一目录在同一进程里只应存在一个 `AnimeIndex` 实例，因此各命令都是用完即弃。
 
 **写入时机**：`add-with-bangumi` 保存新番剧后、`update-with-bangumi` 遍历找到番剧后，以及更新导致 `meta.id` 重算后（都走 `set_anime_index_or_warn` + `flush_or_warn`）。
 
-**重建**：`AnimeIndex::build()` 遍历数据目录，先清空两个 keyspace 再整体写入（已删除的番剧不会残留在索引里），单条失败记进 `BuildResult::errors` 而不中断，最后落一次盘；`aki-cli anime build-index` 就是调它，打开/清空/落盘失败会带着错误返回而不是只打印警告。**注意**：`update-with-bangumi` 改了 `meta.id` 后旧键不会自动消失，想让索引立刻干净就跑一次 `build-index`。
+**重建**：`AnimeIndex::build()` 遍历数据目录，先清空三个 keyspace 再整体写入（已删除的番剧不会残留在索引里），单条失败记进 `BuildResult::errors` 而不中断，最后落一次盘；`aki-cli anime build-index` 就是调它（会打印写了多少 bangumi-id / 标题 / 标签键），打开/清空/落盘失败会带着错误返回而不是只打印警告。**注意**：`update-with-bangumi` 改了 `meta.id`、或改了条目的标签后旧键不会自动消失，想让索引立刻干净就跑一次 `build-index`；`tag-to-meta-id` 是后加的，**旧的索引里没有标签表**，`--tag` 会提示重建。
 
 **读取方式**：命中的索引项仍要能读到对应文件、且其 `bangumi_id` 与查询一致才算有效，否则回退到遍历并修复索引。
 
@@ -422,16 +428,32 @@ pub struct BuildResult {
 
 **文件**: [src/anime/command/search.rs](src/anime/command/search.rs)
 
-**功能**: 按标题匹配字符串，[`Anime::all_titles`]（原名 + 各语言翻译标题）全部参与匹配，大小写不敏感。
+**功能**: 按标题匹配字符串（可用标签筛选），[`Anime::all_titles`]（原名 + 各语言翻译标题）全部参与匹配，大小写不敏感。
 
-- 先扫 `title-to-meta-id` keyspace（约 1800 条键值对，一次全表扫描几十微秒），只对最终要返回的那几条去读数据文件
-- 索引目录不存在、打不开、或者标题表是空的（没跑过 `build-index`）时，退回扫数据目录；扫文件时只反序列化 `meta.id` 与标题（`TitleRecord`），不解析整个 `Anime`——完整反序列化在 debug 构建下要慢两个数量级
+```rust
+pub fn search(query: &str, tags: &[String], limit: usize, verify_index: bool) -> Vec<Anime>
+```
+
+三种用法：
+
+| `query` | `tags` | 行为 |
+|---------|--------|------|
+| 有 | 空 | 按标题搜（原来的行为） |
+| 空 | 有 | **只按标签列番剧**：走 `tag-to-meta-id`，按 `meta.id` 顺序（也就是日期顺序）返回 |
+| 有 | 有 | 标题搜出来的候选再按标签过滤，多个标签之间是「且」 |
+
+- 标签先 `normalize_tags()`（去空白、小写、去重、排序）再查，所以大小写与首尾空格都不敏感；**过滤放在截断 `limit` 之前**，`--tag` 不会让一页少几条
+- 标题侧先扫 `title-to-meta-id` keyspace（约 1240 个标题键，一次全表扫描几十微秒），只对最终要返回的那几条去读数据文件
+- 标签侧用一个标签一个 `prefix()` 扫（18685 个 `(标签, meta.id)` 键），多标签取交集
+- 索引目录不存在、打不开、或者对应的表是空的（没跑过 `build-index`）时，退回扫数据目录；扫文件时只反序列化 `meta.id`、标题与 `info.tags`（`TitleRecord`），不解析整个 `Anime`——完整反序列化在 debug 构建下要慢两个数量级
 - 索引可用但**一条都没匹配到**时，默认就到此为止（索引是权威的，不为此多扫一遍文件）。只有 `--verify-index` 打开 `verify_index` 参数时才再扫一遍数据文件确认：索引可能落后于数据目录（手工放过文件、或加了条目没重建索引），真扫到了就提示索引过期，并把文件结果返回
-- 走文件分支时按情况打印一行 `[?]`（见第十一节的日志点），`IndexLookup` 把「索引这一轮给了什么」分成四种：`Hits`（可能为空）、`Missing`（目录不存在）、`Empty`（标题表里没有标题）、`Unreadable`（打不开，`open_or_warn` 已经报过原因，不再重复）。`fallback_hint()` 是纯函数，只负责按这四种情况生成提示正文，打印交给 `search()`
+- 走文件分支时按情况打印一行 `[?]`（见第十一节的日志点）。标题用 `IndexLookup`、标签用 `TagLookup`，两者都分成 `Hits`（可能为空）、`Missing`（目录不存在）、`Empty`（表里没数据）、`Unreadable`（打不开，`open_or_warn` 已经报过原因，不再重复），再交给同一个纯函数 `table_hint()` 生成提示正文（打印由调用方负责）
 - 分档：完全相同（4.0）> 前缀（3.0）> 包含（2.0），同档内标题越短越靠前（`rank - 字数/1000`）；一条番剧取所有标题里的最高分，按分数降序截取 `limit` 条
-- 空查询直接返回空结果
+- 标题与标签都为空时直接返回空结果（不会把整个库列出来）
 
-> 实测（624 条番剧 / 1240 个标题）：`search 物语` 走索引 debug 11~17 ms、release 60 ms（release 里进程启动占大头），索引目录 0.6 MB。之前「遍历 + 完整反序列化」的写法是 4.6 s。标题数从早期的 1808 降到 1240 是 [`Anime::all_titles`] 去重的结果——原来每部番的原名与它的某个语言译名常常一字不差（`name` == `name_cn`），同一个键被写了两次。
+> **升级提示**：`tag-to-meta-id` 是后加的 keyspace，加标签之前建的索引里没有它，`--tag` 会打印 `[?] ... has no tag entry ...` 并退回扫文件；跑一次 `aki-cli anime build-index` 就好。
+
+> 实测（624 条番剧 / 1240 个标题 / 18685 个标签键）：`search 物语` 走索引 debug 11~17 ms、release 60 ms（release 里进程启动占大头），索引目录 0.6 MB。之前「遍历 + 完整反序列化」的写法是 4.6 s。标题数从早期的 1808 降到 1240 是 [`Anime::all_titles`] 去重的结果——原来每部番的原名与它的某个语言译名常常一字不差（`name` == `name_cn`），同一个键被写了两次。
 
 
 ### 3.9 命令：export_state / import_state (`src/anime/command/`)
@@ -1027,7 +1049,7 @@ aki-cli
 │   ├── add-with-bangumi <bangumi_id> [--refresh]
 │   ├── update-with-bangumi <bangumi_id> [--refresh]
 │   ├── build-index
-│   ├── search <query> [-l <limit>] [--verify-index]
+│   ├── search <query> [-l <limit>] [--tag <tag>...] [--verify-index]
 │   ├── export-state -o <path>
 │   ├── import-state -i <path> [--dry-run]
 │   └── verify
@@ -1041,7 +1063,7 @@ aki-cli
 
 **文件**:
 - [mod.rs](src/bin/cli/mod.rs) — CLI 入口，定义 `SubCommands::Anime` / `SubCommands::Game` / `SubCommands::Bangumi` 子命令
-- [anime.rs](src/bin/cli/anime.rs) — Anime 子命令，`AddWithBangumi` / `UpdateWithBangumi` 接收 Bangumi ID 与 `--refresh`，创建 tokio runtime 调用对应的异步函数（默认复用本地缓存的原始响应，`--refresh` 才重新请求接口），成功后打印番剧标题；`BuildIndex` 重建 fjall 索引并打印写入的 bangumi-id 与标题键数量；`Search` 按标题匹配字符串（走 title 索引，没索引时自动退回扫文件；`--verify-index` 让「索引里没匹配到」的查询再扫一遍文件，确认索引有没有落后于数据目录）；`ExportState` / `ImportState` 与 SQLite 互导 `state`
+- [anime.rs](src/bin/cli/anime.rs) — Anime 子命令，`AddWithBangumi` / `UpdateWithBangumi` 接收 Bangumi ID 与 `--refresh`，创建 tokio runtime 调用对应的异步函数（默认复用本地缓存的原始响应，`--refresh` 才重新请求接口），成功后打印番剧标题；`BuildIndex` 重建 fjall 索引并打印写入的 bangumi-id / 标题 / 标签键数量；`Search` 按标题匹配字符串，`--tag` 可按标签筛选（clap 的 `ArgGroup` 保证「关键词与标签至少给一个」，只给 `--tag` 就是按标签列表）（走 title/tag 索引，没索引时自动退回扫文件；`--verify-index` 让「索引里没匹配到」的查询再扫一遍文件，确认索引有没有落后于数据目录）；`ExportState` / `ImportState` 与 SQLite 互导 `state`
 - [game.rs](src/bin/cli/game.rs) — Game 子命令，`AddWithSteam` 接收 Steam appid，创建 tokio runtime 调用 `game_command::add_with_steam`，成功后打印游戏标题与时长/成就；`Verify` 尚未实现
 - [bangumi.rs](src/bin/cli/bangumi.rs) — Bangumi 子命令，目前只有 `SearchSubject`：关键词**可省**（省了就只用筛选条件，接口把空关键词当成「不按关键词匹配」，因此 `-t anime --air-date ">=2026-10-01" --air-date "<2027-01-01"` 就能列出某一季的新番），拼出 [`source::bangumi::command::SearchSubjects`](src/source/bangumi/command/search_subject.rs) 后调用 `search_subjects`，再把结果逐行打印成 `{bangumi-id:>7} - [{date:^10}][{type:^5}] {译名}（{原名}） - #{rank} {score}`（如 `   1988 - [2006-11-01][book ] 物语系列（〈物語〉シリーズ） - #117 8.5`）。条目 ID 右对齐到 7 位，日期与类型居中（分别占 10 / 5 位），名称由 [`Subject::localized_name()`](src/source/bangumi/subject.rs) 按系统语言取（中文环境用 `name_cn`，取不到或与原名相同则省掉括号），日期未定时写 `unknown`，排名 0 就是接口给的「未上榜」。`--type` 的取值经 CLI 自己的 clap `ValueEnum` 映射成接口要的数字。`--season` 是查季番的快捷方式：把 [`Season`](src/source/bangumi/season.rs) 解析成一组 `air_date` 条件（`>=本季首日` + `<下季首日`），没显式给 `-t` 时补上 `anime`、没显式给 `-s` 时改成 `rank`；按 `rank` 排序时还会加一条 `rank > 0`——接口把未上榜记成 0 且按升序排，不加这条的话排在前面的全是还没上榜的条目
 
@@ -1053,6 +1075,9 @@ aki-cli anime update-with-bangumi 475354         # 默认用缓存的响应刷�
 aki-cli anime update-with-bangumi 475354 --refresh  # 重新拉一次再刷新
 aki-cli anime build-index                    # 重建 .aki/fjall-index/ 里的 bangumi-id 索引
 aki-cli anime search 物语 -l 5               # 按标题直接匹配，不需要先 build-index
+aki-cli anime search --tag 奇幻 -l 5         # 只按标签列（需要跑过新版 build-index）
+aki-cli anime search --tag 奇幻 --tag SHAFT  # 多个标签是「且」
+aki-cli anime search 物语 --tag 奇幻         # 标题 + 标签
 aki-cli anime export-state -o /tmp/state.db  # 导出到指定文件（-o/--output 必填）
 aki-cli anime import-state -i /tmp/state.db --dry-run  # 先看会改哪些（-i/--input 必填）
 aki-cli anime import-state -i /tmp/state.db  # 真写回数据文件
