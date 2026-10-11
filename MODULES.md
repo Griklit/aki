@@ -1101,28 +1101,6 @@ aki-cli b search-subject 物语
 
 **功能**: 简单调试工具，打印系统语言环境列表。
 
-### 9.4 维护脚本 (`scripts/`)
-
-**文件**: [scripts/update-anime-tags.ps1](scripts/update-anime-tags.ps1)（PowerShell，UTF-8 with BOM，Windows PowerShell 5.1 也能读中文）
-
-**功能**: 给所有番剧各跑一次 `aki-cli anime update-with-bangumi`，把 `info.tags` 这类**新增字段**补齐到已有数据文件上。
-
-- 先读完整目录（`bangumi_id` + `info.air_date`）再动手：更新会重写数据文件，`meta.id` 变了还会改名，不能边遍历边更新
-- 默认复用本地缓存的原始响应（不联网）；年份 `>= -RefreshFromYear`（默认 2026）的条目加 `--refresh` 重新请求——这些条目的数据还在变。`-StrictlyAfter` 改成「严格大于」
-- 是否联网由子进程输出的 `[+] using cached` 判断：缓存命中的条目不等（本地读文件很快），真联网的按 `-RefreshDelaySeconds`（默认 1 秒）间隔
-- 依赖 `aki-cli` **出错时退出码为 1**（见 [src/bin/cli/mod.rs](src/bin/cli/mod.rs)），据此统计并在结尾列出失败的 `bangumi_id`，方便用 `-BangumiId` 重跑那几条
-- `-DryRun` 只打印计划；`-Limit N` 试跑前 N 条；`-Binary` / `-DataDir` / `-WorkingDirectory` 可覆盖默认值
-- **工作目录**：release 构建读「当前目录」的 `aki.toml`，所以脚本 `cd` 到 `-DataDir`；debug 构建的 `config` 会自己 `cd aki-data`（相对当前目录），所以用仓库根。脚本按二进制路径里有没有 `\debug\` 自动判断，也可用 `-WorkingDirectory` 指定
-
-```powershell
-# 先看计划，不动数据
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/update-anime-tags.ps1 -DryRun
-# 正式跑（本机禁止运行脚本时加 -ExecutionPolicy Bypass）
-pwsh scripts/update-anime-tags.ps1
-# 重跑几条失败的
-pwsh scripts/update-anime-tags.ps1 -BangumiId 265,299,300
-```
-
 ---
 
 ## 十、数据流总结

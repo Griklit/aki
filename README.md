@@ -91,7 +91,6 @@ src/
 ├── resource/     # 资源管理（早期 WIP）
 ├── utils/        # 工具函数
 └── bin/          # aki-cli、scripts（一次性迁移）、test
-scripts/          # 维护脚本（批量更新等）
 ```
 
 ## 文档
