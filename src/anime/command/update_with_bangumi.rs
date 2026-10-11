@@ -1,8 +1,10 @@
 use std::collections::BTreeMap;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use super::super::{Anime, AnimeInfoInternationalization, SaveAnimeError, index::AnimeIndex};
+use super::super::{
+    Anime, AnimeInfoInternationalization, AnimeNamespace, SaveAnimeError, index::AnimeIndex,
+};
 use crate::source::bangumi::{LoadOrRequestError, Subject};
 use crate::{Language, MetaId};
 
@@ -45,8 +47,10 @@ pub async fn update_with_bangumi(
     refresh_with_subject(&mut anime, subject);
     let path = anime.meta.id.json_data_path();
 
-    // 不覆盖其他条目：同日同名的番剧会算出同一个 `meta.id`。
-    if path != outdated_path && path.exists() {
+    // 不覆盖别的条目：同日同名的番剧会算出同一个 `meta.id`。但如果占着这个文件名的是
+    // **同一个条目的另一份副本**（手工改过名、或旧版遗留），那覆盖它是安全的，写完还会
+    // 把旧的那份清掉——否则副本会永远留在目录里。
+    if path != outdated_path && path.exists() && !is_same_entry(&path, &anime) {
         return Err(UpdateWithBangumiError::TargetExists(path));
     }
     anime
@@ -63,45 +67,70 @@ pub async fn update_with_bangumi(
     Ok(anime)
 }
 
+/// 这个文件里装的是不是同一个条目（同 `meta.id` 且同 `bangumi_id`）。
+///
+/// 数据文件的名字由 `meta.id` 推出来，但历史遗留的文件名可能对不上（改名失败、手工改名），
+/// 于是同一个条目会存在两份。读不动的文件一律当成「别人的」，不去覆盖。
+fn is_same_entry(path: &Path, anime: &Anime) -> bool {
+    Anime::load(path).is_ok_and(|existing| {
+        existing.meta.id.id == anime.meta.id.id && existing.bangumi_id == anime.bangumi_id
+    })
+}
+
 /// 找出 `bangumi_id` 唯一对应的番剧，并返回它当前的数据文件路径。
 ///
 /// 先查索引；索引不可用、未命中或已失效（文件被改名、删除）时回退到遍历数据
 /// 目录，并把找到的映射写回索引。
+///
+/// 返回的第二个值是**这次真正读了哪个文件**，而不是「按 `meta.id` 反推出来的规范路径」：
+/// 两者在文件被手工改名、或历史遗留了旧名字时会不一致，而写完之后要删掉的正是前者。
 fn find_exclusive_anime(
     index: Option<&AnimeIndex>,
     bangumi_id: i64,
 ) -> Result<(Anime, PathBuf), UpdateWithBangumiError> {
-    if let Some(anime) = index
+    if let Some(found) = index
         .and_then(|index| index.get_meta_id_of_bangumi_id(bangumi_id))
         .and_then(|meta_id| load_indexed(bangumi_id, &meta_id))
     {
-        let path = anime.meta.id.json_data_path();
-        return Ok((anime, path));
+        return Ok(found);
     }
 
-    let mut animes = Anime::iter_all().filter(|anime| anime.bangumi_id == Some(bangumi_id));
-    let Some(anime) = animes.next() else {
+    let found: Vec<(PathBuf, Anime)> = Anime::iter_all_with_path()
+        .filter(|(_, anime)| anime.bangumi_id == Some(bangumi_id))
+        .collect();
+    let Some((first_path, first)) = found.first().cloned() else {
         return Err(UpdateWithBangumiError::NotFound(bangumi_id));
     };
-    let duplicated = animes.count();
-    if duplicated > 0 {
-        return Err(UpdateWithBangumiError::Ambiguous(
-            bangumi_id,
-            duplicated + 1,
-        ));
+    // 同一个 `meta.id` 的多份文件是同一个条目的副本（改名没删干净、手工复制），不算
+    // 「两个条目」；`meta.id` 真的不同才是重复数据，那种情况宁可报错也不猜。
+    if found
+        .iter()
+        .any(|(_, anime)| anime.meta.id.id != first.meta.id.id)
+    {
+        return Err(UpdateWithBangumiError::Ambiguous(bangumi_id, found.len()));
     }
+    // 优先拿规范路径上的那一份当来源，其余副本等写完新文件后清掉。
+    let canonical = first.meta.id.json_data_path();
+    let (path, anime) = found
+        .into_iter()
+        .find(|(path, _)| *path == canonical)
+        .unwrap_or((first_path, first));
     if let Some(index) = index {
         index.set_anime_index_or_warn(&anime);
         index.flush_or_warn();
     }
-    let path = anime.meta.id.json_data_path();
     Ok((anime, path))
 }
 
 /// 按索引里的 `meta_id` 读取番剧，并确认它确实属于该 `bangumi_id`。
-fn load_indexed(bangumi_id: i64, meta_id: &str) -> Option<Anime> {
-    let anime = Anime::load_with_meta_id(&MetaId::with_id(meta_id.to_string())).ok()?;
-    (anime.bangumi_id == Some(bangumi_id)).then_some(anime)
+///
+/// 顺带把「读的是哪个文件」一起返回：索引里的 `meta_id` 推出路径，文件内容里的
+/// `meta.id` 可能已经不是它了（上一次改名只写没删），删除旧文件时要认前者。
+fn load_indexed(bangumi_id: i64, meta_id: &str) -> Option<(Anime, PathBuf)> {
+    let meta_id = MetaId::<AnimeNamespace>::with_id(meta_id.to_string());
+    let path = meta_id.json_data_path();
+    let anime = Anime::load(&path).ok()?;
+    (anime.bangumi_id == Some(bangumi_id)).then_some((anime, path))
 }
 
 /// 用 Bangumi 的最新条目刷新 `anime` 中由 Bangumi 提供的部分。
@@ -219,6 +248,40 @@ mod tests {
             matches!(error, UpdateWithBangumiError::NotFound(id) if id == i64::MAX),
             "unexpected error: {error}"
         );
+    }
+
+    /// 目标文件名被同一个条目的**另一份副本**占着时不算冲突——那是上次改名没删干净的
+    /// 遗留，覆盖它并把旧的那份清掉才是对的。
+    #[test]
+    fn same_entry_is_not_a_conflict() {
+        let dir = std::env::temp_dir().join(format!("aki-same-entry-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let mut anime = outdated_anime(265);
+        anime.meta.id = crate::MetaId::with_id("[2020-01-01] 新名字".to_string());
+        let target = dir.join("target.json");
+        anime.save_force(&target).unwrap();
+
+        // 同 meta.id、同 bangumi_id：只是副本
+        assert!(is_same_entry(&target, &anime));
+
+        // meta.id 不同：别的条目
+        let mut other = anime.clone();
+        other.meta.id = crate::MetaId::with_id("[2020-01-01] 别的条目".to_string());
+        assert!(!is_same_entry(&target, &other));
+
+        // bangumi_id 不同：别的条目
+        let mut other = anime.clone();
+        other.bangumi_id = Some(266);
+        assert!(!is_same_entry(&target, &other));
+
+        // 读不动的文件当成别人的，不覆盖
+        let broken = dir.join("broken.json");
+        std::fs::write(&broken, b"{ not json").unwrap();
+        assert!(!is_same_entry(&broken, &anime));
+        assert!(!is_same_entry(&dir.join("missing.json"), &anime));
+
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

@@ -343,7 +343,11 @@ pub async fn update_with_bangumi(client: &reqwest::Client, bangumi_id: i64, refr
 1. 载入 `.aki/fjall-index/` 里的 bangumi-id 索引，按 `bangumi_id` 直接定位番剧；索引未命中或索引项已失效（文件被改名、删除）时回退到遍历数据目录，并把结果写回索引：一条都没有报 `NotFound`，多于一条报 `Ambiguous`（先查再取数据，失败时不会写入任何数据）
 2. 取条目数据：`Subject::load_or_request_with_id(client, bangumi_id, refresh)`——默认复用 `source/bangumi/subject/<id>.json` 里的原始响应，**`refresh` 为 `true` 才真的重新请求**（所以「更新」不加 `--refresh` 时用的是上次存下来的那份响应）
 3. 用取到的条目刷新该番剧
-4. 写入数据文件并同步索引；若 `meta.id` 变化导致改名，先把索引指向新文件，再删除旧文件，新文件名已被其他条目占用时报 `TargetExists`（不覆盖）
+4. 写入数据文件并同步索引；若 `meta.id` 变化导致改名，先把索引指向新文件，再删除旧文件，新文件名已被**别的条目**占用时报 `TargetExists`（不覆盖）
+
+> **定位返回的是「真正读了哪个文件」，不是「按 `meta.id` 反推的路径」**（`find_exclusive_anime` 用 `iter_all_with_path()`，索引分支也把读的那个路径带回）。这两者在文件被手工改名、或上次改名只写没删时会不一致，而写完之后要删掉的正是前者——只认反推路径的话，删的会是一个不存在（或另一个）文件名，于是新旧两份都留在目录里。
+>
+> 同一个 `meta.id` 的多份文件被视为**同一份条目的副本**（不算 `Ambiguous`）：定位时优先取规范路径上那份，写完新文件后把旧的那份删掉。目标文件名被同一个条目的另一份副本占着时允许覆盖（`is_same_entry()` = 同 `meta.id` 且同 `bangumi_id`），被别的条目占着才报 `TargetExists`。
 
 刷新规则：
 
@@ -1097,6 +1101,28 @@ aki-cli b search-subject 物语
 
 **功能**: 简单调试工具，打印系统语言环境列表。
 
+### 9.4 维护脚本 (`scripts/`)
+
+**文件**: [scripts/update-anime-tags.ps1](scripts/update-anime-tags.ps1)（PowerShell，UTF-8 with BOM，Windows PowerShell 5.1 也能读中文）
+
+**功能**: 给所有番剧各跑一次 `aki-cli anime update-with-bangumi`，把 `info.tags` 这类**新增字段**补齐到已有数据文件上。
+
+- 先读完整目录（`bangumi_id` + `info.air_date`）再动手：更新会重写数据文件，`meta.id` 变了还会改名，不能边遍历边更新
+- 默认复用本地缓存的原始响应（不联网）；年份 `>= -RefreshFromYear`（默认 2026）的条目加 `--refresh` 重新请求——这些条目的数据还在变。`-StrictlyAfter` 改成「严格大于」
+- 是否联网由子进程输出的 `[+] using cached` 判断：缓存命中的条目不等（本地读文件很快），真联网的按 `-RefreshDelaySeconds`（默认 1 秒）间隔
+- 依赖 `aki-cli` **出错时退出码为 1**（见 [src/bin/cli/mod.rs](src/bin/cli/mod.rs)），据此统计并在结尾列出失败的 `bangumi_id`，方便用 `-BangumiId` 重跑那几条
+- `-DryRun` 只打印计划；`-Limit N` 试跑前 N 条；`-Binary` / `-DataDir` / `-WorkingDirectory` 可覆盖默认值
+- **工作目录**：release 构建读「当前目录」的 `aki.toml`，所以脚本 `cd` 到 `-DataDir`；debug 构建的 `config` 会自己 `cd aki-data`（相对当前目录），所以用仓库根。脚本按二进制路径里有没有 `\debug\` 自动判断，也可用 `-WorkingDirectory` 指定
+
+```powershell
+# 先看计划，不动数据
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/update-anime-tags.ps1 -DryRun
+# 正式跑（本机禁止运行脚本时加 -ExecutionPolicy Bypass）
+pwsh scripts/update-anime-tags.ps1
+# 重跑几条失败的
+pwsh scripts/update-anime-tags.ps1 -BangumiId 265,299,300
+```
+
 ---
 
 ## 十、数据流总结
@@ -1179,7 +1205,7 @@ aki-cli (clap 解析命令)
 |------|------|
 | 命令失败（网络、IO、找不到数据） | 返回 `Err`，把包装错误交给上层；**不要**在这里打印 |
 | 进程起不来（配置读不到、工作目录切不过去） | `[x] ...` 然后 `std::process::exit(1)`，见 [config/mod.rs](src/config/mod.rs) 的 `CONFIG` |
-| 命令错误最终出口 | 只在 [src/bin/cli/mod.rs](src/bin/cli/mod.rs) 打一次 `eprintln!("[!] {e:?}")` |
+| 命令错误最终出口 | 只在 [src/bin/cli/mod.rs](src/bin/cli/mod.rs) 打一次 `eprintln!("[!] {e:?}")`，并 `exit(1)`（退出码要让脚本能判断成败） |
 | 跳过一条坏数据、继续处理其余 | `[?] ...` 并继续（如 `Anime::iter_all_with_path` 跳过读不动的 JSON） |
 | 可选操作失败但不影响用户数据 | `[?] ...` 并继续（如索引读写失败、多余文件清理失败） |
 | 会改动用户数据却失败了 | 必须返回 `Err`：宁可命令失败，也不能让用户以为成功了 |

@@ -77,14 +77,6 @@ aki-cli bangumi search-subject --season last -s heat    # 上一季，按收藏�
 aki-cli bangumi search-subject -t anime --air-date ">=2026-10-01" --air-date "<2027-01-01"  # 关键词可省
 ```
 
-诊断信息走 `stderr` 并带级别符号前缀（`[#] [+] [?] [!] [x]`），命令结果走 `stdout`。
-
-> `game add-with-steam` 需要能访问 `store.steampowered.com`；走代理时设置 `HTTPS_PROXY` 即可。
->
-> `bangumi search-subject` 只查接口、不写本地数据；搜到想要的条目后，再拿 id 跑 `anime add-with-bangumi <id>` 入库。
->
-> `anime add-with-bangumi` / `update-with-bangumi` 默认复用 `aki-data/source/bangumi/subject/<id>.json` 里的原始响应（命中时会打印一行 `[+]`，不联网）；要重新拉取就加 `--refresh`。
-
 ## 项目结构
 
 ```
@@ -99,6 +91,7 @@ src/
 ├── resource/     # 资源管理（早期 WIP）
 ├── utils/        # 工具函数
 └── bin/          # aki-cli、scripts（一次性迁移）、test
+scripts/          # 维护脚本（批量更新等）
 ```
 
 ## 文档
