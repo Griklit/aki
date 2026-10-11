@@ -10,6 +10,8 @@ pub struct AnimeInfo {
     pub air_date: Option<NaiveDate>,
     pub season: Option<u16>,
     pub episodes: Option<u16>,
+    #[serde(default)]
+    pub tags: Vec<String>,
     // pub cover: Option<Resource<resource_type::Cover>>,
 }
 

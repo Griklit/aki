@@ -276,6 +276,7 @@ mod tests {
                 air_date: NaiveDate::from_ymd_opt(2020, 1, 1),
                 season: None,
                 episodes: Some(12),
+                tags: Vec::new(),
             },
             BTreeMap::<Language, AnimeInfoInternationalization>::new(),
             state,

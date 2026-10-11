@@ -7,12 +7,18 @@ use std::path::PathBuf;
 pub struct AddWithBangumi {
     /// Bangumi 条目 ID。
     bangumi_id: i64,
+    /// 忽略本地缓存的原始响应，重新请求接口
+    #[arg(long)]
+    refresh: bool,
 }
 
 #[derive(Args)]
 pub struct UpdateWithBangumi {
     /// Bangumi 条目 ID。
     bangumi_id: i64,
+    /// 忽略本地缓存的原始响应，重新请求接口
+    #[arg(long)]
+    refresh: bool,
 }
 
 #[derive(Args)]
@@ -51,7 +57,7 @@ pub struct ImportState {
 pub enum AnimeSubCommands {
     /// 按 Bangumi 条目 ID 添加动画。
     AddWithBangumi(AddWithBangumi),
-    /// 按 Bangumi 条目 ID 重新拉取并刷新动画数据（不改动 state）。
+    /// 按 Bangumi 条目 ID 刷新动画数据（默认用本地缓存的原始响应，--refresh 才重新拉取；不改动 state）。
     UpdateWithBangumi(UpdateWithBangumi),
     /// 重建动画索引（fjall：bangumi-id 与 title 两个 keyspace）。
     BuildIndex(BuildIndex),
@@ -71,15 +77,21 @@ impl AnimeSubCommands {
             Self::AddWithBangumi(args) => {
                 let runtime = tokio::runtime::Runtime::new()?;
                 let client = reqwest::Client::new();
-                let anime =
-                    runtime.block_on(anime_command::add_with_bangumi(&client, args.bangumi_id))?;
+                let anime = runtime.block_on(anime_command::add_with_bangumi(
+                    &client,
+                    args.bangumi_id,
+                    args.refresh,
+                ))?;
                 Ok(Some(anime.to_string()))
             }
             Self::UpdateWithBangumi(args) => {
                 let runtime = tokio::runtime::Runtime::new()?;
                 let client = reqwest::Client::new();
-                let anime = runtime
-                    .block_on(anime_command::update_with_bangumi(&client, args.bangumi_id))?;
+                let anime = runtime.block_on(anime_command::update_with_bangumi(
+                    &client,
+                    args.bangumi_id,
+                    args.refresh,
+                ))?;
                 Ok(Some(anime.to_string()))
             }
             Self::BuildIndex(_) => {

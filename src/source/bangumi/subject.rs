@@ -1,9 +1,19 @@
 use std::{fs::File, io};
+use std::path::PathBuf;
 
 use super::BangumiNamespace;
 use crate::CONFIG;
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
+
+/// 取条目数据（缓存或接口）时产生的错误。
+#[derive(Debug, thiserror::Error)]
+pub enum LoadOrRequestError {
+    #[error("bangumi request error")]
+    Request(#[source] reqwest::Error),
+    #[error("save bangumi subject error")]
+    Save(#[source] io::Error),
+}
 
 /// Collection
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -213,9 +223,69 @@ impl Subject {
     }
 
     pub fn load_with_id(id: i64) -> Result<Self, io::Error> {
-        let path = BangumiNamespace::subject_path(id);
+        Self::load_from_path(&BangumiNamespace::subject_path(id))
+    }
+
+    /// 从指定文件读条目。分成一个吃路径的函数，是为了让「缓存优先」那段逻辑能在
+    /// 测试里用临时文件验证，而不必碰真实数据目录。
+    fn load_from_path(path: &std::path::Path) -> Result<Self, io::Error> {
         let file = File::open(path)?;
         let subject: Subject = serde_json::from_reader(file)?;
+        Ok(subject)
+    }
+
+    /// 取条目数据：本地已经存过原始响应就用本地的，没有（或要求刷新）才请求接口。
+    ///
+    /// 这就是「原始响应先落盘」的用处之一——不但是解析改错时的回放来源，也是离线复用：
+    /// 同一份响应没必要为了 `add-with-bangumi` / `update-with-bangumi` 反复拉。缓存命中时
+    /// 打印一行 `[+]`，好让用户知道这次没有联网（要重新拉就加 `--refresh`）。
+    ///
+    /// 缓存文件读不出来（被改坏、写到一半）时打印一行 `[?]` 并退回请求，而不是直接失败。
+    ///
+    /// # Errors
+    /// 请求接口失败、或请求成功后落盘失败时返回错误。
+    pub async fn load_or_request_with_id(
+        client: &reqwest::Client,
+        subject_id: i64,
+        refresh: bool,
+    ) -> Result<Self, LoadOrRequestError> {
+        Self::load_or_request_at(
+            client,
+            subject_id,
+            BangumiNamespace::subject_path(subject_id),
+            refresh,
+        )
+        .await
+    }
+
+    /// [`Self::load_or_request_with_id`] 的实现。`path` 由调用方给出，测试才能脱离
+    /// 真实数据目录验证「有缓存就不请求」。
+    async fn load_or_request_at(
+        client: &reqwest::Client,
+        subject_id: i64,
+        path: PathBuf,
+        refresh: bool,
+    ) -> Result<Self, LoadOrRequestError> {
+        if !refresh && path.exists() {
+            match Self::load_from_path(&path) {
+                Ok(subject) => {
+                    eprintln!(
+                        "[+] using cached bangumi subject '{}' \
+                         (pass --refresh to request it again)",
+                        path.display()
+                    );
+                    return Ok(subject);
+                }
+                Err(err) => eprintln!(
+                    "[?] failed to load cached bangumi subject '{}': {err}, requesting it again",
+                    path.display()
+                ),
+            }
+        }
+        let subject = Self::request_with_id(client, subject_id)
+            .await
+            .map_err(LoadOrRequestError::Request)?;
+        subject.save().map_err(LoadOrRequestError::Save)?;
         Ok(subject)
     }
 
@@ -308,6 +378,28 @@ mod tests {
         assert_eq!(subject.localized_name(crate::Language::ZhCn), "RAW");
     }
 
+    /// 本地已经有原始响应时不该再联网：把缓存里的名字改成一个接口不可能返回的值，
+    /// 读出来的就是缓存的那份就说明没走网络。（走网络的分支要真的打接口，见下面的
+    /// `request_subject`。）
+    #[tokio::test]
+    async fn cached_response_is_reused_without_requesting() {
+        let dir = std::env::temp_dir().join(format!("aki-subject-cache-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("475354.json");
+
+        let mut subject: Subject = serde_json::from_str(include_str!("subject-example.json")).unwrap();
+        subject.name = "CACHED NAME".to_string();
+        std::fs::write(&path, serde_json::to_string_pretty(&subject).unwrap()).unwrap();
+
+        let loaded =
+            Subject::load_or_request_at(&reqwest::Client::new(), subject.id, path, false)
+                .await
+                .unwrap();
+        assert_eq!(loaded.name, "CACHED NAME");
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     #[tokio::test]
     #[ignore = "require-external-internet"]
     async fn request_subject() {
@@ -315,5 +407,15 @@ mod tests {
             .await
             .unwrap();
         dbg!(ret);
+    }
+
+    /// `refresh` 为 `true` 时忽略缓存、真的重新请求（需要联网）。
+    #[tokio::test]
+    #[ignore = "require-external-internet"]
+    async fn refresh_ignores_the_cached_response() {
+        let ret = Subject::load_or_request_with_id(&reqwest::Client::new(), 475_354, true)
+            .await
+            .unwrap();
+        assert_eq!(ret.id, 475_354);
     }
 }

@@ -261,6 +261,8 @@ impl From<Subject> for Anime {
                 air_date: subject.date,
                 season: None,
                 episodes: Some(u16::try_from(subject.eps).unwrap_or_default()),
+                // Bangumi 的 tags 已按使用人数降序，直接沿用这个顺序
+                tags: subject.tags.iter().map(|tag| tag.name.clone()).collect(),
             },
             internationalizations: i18n,
             state: AnimeState::default(),
@@ -285,6 +287,7 @@ mod tests {
                 air_date: None,
                 season: None,
                 episodes: None,
+                tags: Vec::new(),
             },
             BTreeMap::from([
                 // 与原名重复（中文原创番就是这样：`name` == `name_cn`）
@@ -319,6 +322,35 @@ mod tests {
         let subject: Subject = serde_json::from_str(subject_json_str).unwrap();
         let anime = Anime::from(subject);
         dbg!(anime);
+    }
+
+    /// 条目里的标签按接口给的顺序（使用人数降序）进 `info.tags`，只留名字。
+    #[test]
+    fn tags_come_from_the_subject() {
+        let subject: Subject =
+            serde_json::from_str(include_str!("../source/bangumi/subject-example.json")).unwrap();
+        let expected: Vec<String> = subject.tags.iter().map(|tag| tag.name.clone()).collect();
+        assert!(!expected.is_empty(), "样本条目应当带标签");
+
+        let anime = Anime::from(subject);
+        assert_eq!(anime.info.tags, expected);
+        assert_eq!(
+            anime.info.tags.first().map(String::as_str),
+            Some("物语系列")
+        );
+    }
+
+    /// 老数据文件里没有 `tags` 字段，读的时候应当当成空列表而不是报错。
+    #[test]
+    fn tags_default_to_empty_for_old_files() {
+        let subject: Subject =
+            serde_json::from_str(include_str!("../source/bangumi/subject-example.json")).unwrap();
+        let mut value = serde_json::to_value(Anime::from(subject)).unwrap();
+        // 早期版本写出来的文件里没有 info.tags
+        value["info"].as_object_mut().unwrap().remove("tags");
+
+        let old: Anime = serde_json::from_value(value).unwrap();
+        assert!(old.info.tags.is_empty());
     }
 
     #[test]

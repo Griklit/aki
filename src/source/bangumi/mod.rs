@@ -5,4 +5,4 @@ mod subject;
 
 pub use namespace::BangumiNamespace;
 pub use season::{Season, SeasonParseError};
-pub use subject::{Subject, Type as SubjectType};
+pub use subject::{LoadOrRequestError, Subject, Type as SubjectType};

@@ -3,15 +3,14 @@ use std::io;
 use std::path::PathBuf;
 
 use super::super::{Anime, AnimeInfoInternationalization, SaveAnimeError, index::AnimeIndex};
-use crate::source::bangumi::Subject;
+use crate::source::bangumi::{LoadOrRequestError, Subject};
 use crate::{Language, MetaId};
 
 #[derive(Debug, thiserror::Error)]
 pub enum UpdateWithBangumiError {
-    #[error("bangumi request error")]
-    BangumiRequest(#[source] reqwest::Error),
-    #[error("save bangumi subject error")]
-    SaveBangumiSubject(#[source] io::Error),
+    /// 取条目失败：请求接口或把响应落盘出错（缓存读不出来只会退回请求并警告）。
+    #[error("load or request bangumi subject error")]
+    FetchSubject(#[source] LoadOrRequestError),
     #[error("no anime found with bangumi id {0}")]
     NotFound(i64),
     #[error("{1} anime entries share bangumi id {0}")]
@@ -24,21 +23,24 @@ pub enum UpdateWithBangumiError {
     RemoveOutdatedFile(#[source] io::Error),
 }
 
+/// 按 Bangumi ID 找到已有番剧，并用最新条目刷新它。
+///
+/// 条目数据优先用本地已经存过的原始响应（见 [`Subject::load_or_request_with_id`]），
+/// `refresh` 为 `true` 时忽略缓存、重新请求——对「更新」来说这一项尤其重要：
+/// 不加 `--refresh` 时用的是上次存下来的响应，不会真的重新拉。
 pub async fn update_with_bangumi(
     client: &reqwest::Client,
     bangumi_id: i64,
+    refresh: bool,
 ) -> Result<Anime, UpdateWithBangumiError> {
     // 索引只是加速定位的缓存，打不开就退化成遍历数据目录。
     let index = AnimeIndex::open_or_warn();
     // 先确认要更新的条目存在且唯一，避免为一次注定失败的调用写入 Bangumi 数据。
     let (mut anime, outdated_path) = find_exclusive_anime(index.as_ref(), bangumi_id)?;
 
-    let subject = Subject::request_with_id(client, bangumi_id)
+    let subject = Subject::load_or_request_with_id(client, bangumi_id, refresh)
         .await
-        .map_err(UpdateWithBangumiError::BangumiRequest)?;
-    subject
-        .save()
-        .map_err(UpdateWithBangumiError::SaveBangumiSubject)?;
+        .map_err(UpdateWithBangumiError::FetchSubject)?;
 
     refresh_with_subject(&mut anime, subject);
     let path = anime.meta.id.json_data_path();
@@ -197,6 +199,7 @@ mod tests {
                 air_date: None,
                 season: None,
                 episodes: Some(1),
+                tags: vec!["旧标签".to_string()],
             },
             BTreeMap::from([(
                 Language::EnUs,

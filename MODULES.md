@@ -242,8 +242,11 @@ pub struct AnimeInfo {
     pub air_date: Option<NaiveDate>,// 播出日期
     pub season: Option<u16>,        // 季度
     pub episodes: Option<u16>,      // 总集数
+    pub tags: Vec<String>,          // 标签（来自 Bangumi 条目的 tags，按使用人数降序，只留名字）
 }
 ```
+
+`tags` 带 `#[serde(default)]`：早期数据文件里没有这个字段，读的时候当成空列表，不必为了加字段去改历史数据。
 
 ```rust
 pub struct AnimeInfoInternationalization {
@@ -316,12 +319,12 @@ pub struct AnimeState {
 **功能**: 通过 Bangumi ID 添加番剧的异步命令。
 
 ```rust
-pub async fn add_with_bangumi(client: &reqwest::Client, bangumi_id: i64)
+pub async fn add_with_bangumi(client: &reqwest::Client, bangumi_id: i64, refresh: bool)
     -> Result<Anime, AddWithBangumiError>
 ```
 
 流程：
-1. 调用 Bangumi API 获取条目数据
+1. 取条目数据：`Subject::load_or_request_with_id(client, bangumi_id, refresh)`——`source/bangumi/subject/<id>.json` 有缓存就直接读本地，`refresh` 为 `true` 才重新请求
 2. 将 `BangumiSubject` 转换为 `Anime`
 3. 保存为 JSON 文件
 
@@ -329,17 +332,17 @@ pub async fn add_with_bangumi(client: &reqwest::Client, bangumi_id: i64)
 
 **文件**: [src/anime/command/update_with_bangumi.rs](src/anime/command/update_with_bangumi.rs)
 
-**功能**: 按 Bangumi ID 找到已有番剧，重新拉取条目数据并刷新其中的 Bangumi 数据。
+**功能**: 按 Bangumi ID 找到已有番剧，取条目数据（默认用本地缓存的原始响应）刷新其中的 Bangumi 数据。
 
 ```rust
-pub async fn update_with_bangumi(client: &reqwest::Client, bangumi_id: i64)
+pub async fn update_with_bangumi(client: &reqwest::Client, bangumi_id: i64, refresh: bool)
     -> Result<Anime, UpdateWithBangumiError>
 ```
 
 流程：
-1. 载入 `.aki/fjall-index/` 里的 bangumi-id 索引，按 `bangumi_id` 直接定位番剧；索引未命中或索引项已失效（文件被改名、删除）时回退到遍历数据目录，并把结果写回索引：一条都没有报 `NotFound`，多于一条报 `Ambiguous`（先查再联网，失败时不会写入任何数据）
-2. 调用 Bangumi API 获取条目数据并保存
-3. 用最新条目刷新该番剧
+1. 载入 `.aki/fjall-index/` 里的 bangumi-id 索引，按 `bangumi_id` 直接定位番剧；索引未命中或索引项已失效（文件被改名、删除）时回退到遍历数据目录，并把结果写回索引：一条都没有报 `NotFound`，多于一条报 `Ambiguous`（先查再取数据，失败时不会写入任何数据）
+2. 取条目数据：`Subject::load_or_request_with_id(client, bangumi_id, refresh)`——默认复用 `source/bangumi/subject/<id>.json` 里的原始响应，**`refresh` 为 `true` 才真的重新请求**（所以「更新」不加 `--refresh` 时用的是上次存下来的那份响应）
+3. 用取到的条目刷新该番剧
 4. 写入数据文件并同步索引；若 `meta.id` 变化导致改名，先把索引指向新文件，再删除旧文件，新文件名已被其他条目占用时报 `TargetExists`（不覆盖）
 
 刷新规则：
@@ -699,10 +702,13 @@ impl<T> SteamRawStore<T> {
 | `Item`/`Value`/`ValueArrayItem` | 信息框（infobox）的 KV 数据 |
 
 **方法**:
-- `request_with_id(client, id)` — 异步请求 Bangumi API，获取指定 ID 的条目
+- `load_or_request_with_id(client, id, refresh)` — **取条目数据的入口**：`refresh` 为 `false` 且 `subject_path(id)` 已存在时直接读本地缓存（打印一行 `[+]` 说明这次没联网），否则请求接口并落盘；缓存文件读不出来时打印 `[?]` 并退回请求。`add_with_bangumi` / `update_with_bangumi` 都走它
+- `request_with_id(client, id)` — 异步请求 Bangumi API，获取指定 ID 的条目（不做缓存判断，只发请求）
 - `save()` / `load_with_id(id)` — 原始响应落到 / 读自 `BangumiNamespace::subject_path(id)`
 - `r#type_enumed()` — 将数字类型转为 `Type` 枚举；反向的 `Type::code()` 给出接口用的数字（`5` 不是合法类型），`Type::as_str()` 给出 `book` / `anime` / `music` / `game` / `real`
 - `localized_name(language)` — 按语言取名字：中文环境用 `name_cn`，其余语言、以及 `name_cn` 为空时用原名（结果保证非空）
+
+取数据时的错误统一为 [`LoadOrRequestError`]（`Request` / `Save` 两种），所以两个命令的错误枚举里只有一个 `FetchSubject` 变体。
 
 **示例数据**: `subject-example.json` 包含一条完整的 Bangumi API 响应样本，用于测试。`date` 用容错的反序列化：接口在日期未定时给空字符串，这里当成「没有日期」而不是解析失败。
 
@@ -1014,8 +1020,8 @@ pub fn truncate(s: &str, max: usize) -> String
 ```
 aki-cli
 ├── anime (alias: a)
-│   ├── add-with-bangumi <bangumi_id>
-│   ├── update-with-bangumi <bangumi_id>
+│   ├── add-with-bangumi <bangumi_id> [--refresh]
+│   ├── update-with-bangumi <bangumi_id> [--refresh]
 │   ├── build-index
 │   ├── search <query> [-l <limit>] [--verify-index]
 │   ├── export-state -o <path>
@@ -1031,14 +1037,16 @@ aki-cli
 
 **文件**:
 - [mod.rs](src/bin/cli/mod.rs) — CLI 入口，定义 `SubCommands::Anime` / `SubCommands::Game` / `SubCommands::Bangumi` 子命令
-- [anime.rs](src/bin/cli/anime.rs) — Anime 子命令，`AddWithBangumi` / `UpdateWithBangumi` 接收 Bangumi ID，创建 tokio runtime 调用对应的异步函数，成功后打印番剧标题；`BuildIndex` 重建 fjall 索引并打印写入的 bangumi-id 与标题键数量；`Search` 按标题匹配字符串（走 title 索引，没索引时自动退回扫文件；`--verify-index` 让「索引里没匹配到」的查询再扫一遍文件，确认索引有没有落后于数据目录）；`ExportState` / `ImportState` 与 SQLite 互导 `state`
+- [anime.rs](src/bin/cli/anime.rs) — Anime 子命令，`AddWithBangumi` / `UpdateWithBangumi` 接收 Bangumi ID 与 `--refresh`，创建 tokio runtime 调用对应的异步函数（默认复用本地缓存的原始响应，`--refresh` 才重新请求接口），成功后打印番剧标题；`BuildIndex` 重建 fjall 索引并打印写入的 bangumi-id 与标题键数量；`Search` 按标题匹配字符串（走 title 索引，没索引时自动退回扫文件；`--verify-index` 让「索引里没匹配到」的查询再扫一遍文件，确认索引有没有落后于数据目录）；`ExportState` / `ImportState` 与 SQLite 互导 `state`
 - [game.rs](src/bin/cli/game.rs) — Game 子命令，`AddWithSteam` 接收 Steam appid，创建 tokio runtime 调用 `game_command::add_with_steam`，成功后打印游戏标题与时长/成就；`Verify` 尚未实现
 - [bangumi.rs](src/bin/cli/bangumi.rs) — Bangumi 子命令，目前只有 `SearchSubject`：关键词**可省**（省了就只用筛选条件，接口把空关键词当成「不按关键词匹配」，因此 `-t anime --air-date ">=2026-10-01" --air-date "<2027-01-01"` 就能列出某一季的新番），拼出 [`source::bangumi::command::SearchSubjects`](src/source/bangumi/command/search_subject.rs) 后调用 `search_subjects`，再把结果逐行打印成 `{bangumi-id:>7} - [{date:^10}][{type:^5}] {译名}（{原名}） - #{rank} {score}`（如 `   1988 - [2006-11-01][book ] 物语系列（〈物語〉シリーズ） - #117 8.5`）。条目 ID 右对齐到 7 位，日期与类型居中（分别占 10 / 5 位），名称由 [`Subject::localized_name()`](src/source/bangumi/subject.rs) 按系统语言取（中文环境用 `name_cn`，取不到或与原名相同则省掉括号），日期未定时写 `unknown`，排名 0 就是接口给的「未上榜」。`--type` 的取值经 CLI 自己的 clap `ValueEnum` 映射成接口要的数字。`--season` 是查季番的快捷方式：把 [`Season`](src/source/bangumi/season.rs) 解析成一组 `air_date` 条件（`>=本季首日` + `<下季首日`），没显式给 `-t` 时补上 `anime`、没显式给 `-s` 时改成 `rank`；按 `rank` 排序时还会加一条 `rank > 0`——接口把未上榜记成 0 且按升序排，不加这条的话排在前面的全是还没上榜的条目
 
 **使用示例**:
 ```bash
-aki-cli anime add-with-bangumi 475354
-aki-cli anime update-with-bangumi 475354
+aki-cli anime add-with-bangumi 475354           # 本地有原始响应就直接用它
+aki-cli anime add-with-bangumi 475354 --refresh  # 忽略缓存，重新请求接口
+aki-cli anime update-with-bangumi 475354         # 默认用缓存的响应刷新（不联网）
+aki-cli anime update-with-bangumi 475354 --refresh  # 重新拉一次再刷新
 aki-cli anime build-index                    # 重建 .aki/fjall-index/ 里的 bangumi-id 索引
 aki-cli anime search 物语 -l 5               # 按标题直接匹配，不需要先 build-index
 aki-cli anime export-state -o /tmp/state.db  # 导出到指定文件（-o/--output 必填）
@@ -1099,10 +1107,11 @@ aki-cli b search-subject 物语
     ▼
 aki-cli (clap 解析命令)
     │
-    ├─ anime_command::add_with_bangumi(bangumi_id)
+    ├─ anime_command::add_with_bangumi(bangumi_id, refresh)
     │   │
-    │   ├── Bangumi API ◄── source::bangumi::Subject::request_with_id()
-    │   │   返回 JSON → 反序列化为 Subject
+    │   ├── source::bangumi::Subject::load_or_request_with_id()
+    │   │   本地已有 source/bangumi/subject/{id}.json 且没要求 --refresh 就直接读它；
+    │   │   否则请求 Bangumi API，返回 JSON → 反序列化为 Subject
     │   │   同时 Subject::save() → BangumiNamespace::subject_path(id)
     │   │                        → database/source/bangumi/subject/{id}.json（响应原文）
     │   │
@@ -1143,7 +1152,7 @@ aki-cli (clap 解析命令)
 | 符号 | 级别 | 什么时候用 | 现有例子 |
 |------|------|------------|----------|
 | `[#]` | debug | 只给开发看的中间结果，普通用户不需要 | `[#] parsed real response: [2020-08-14] Factorio`（`game/steam.rs` 测试） |
-| `[+]` | info | 正常但有话要说的进展 | 目前没有使用点，新加进展提示时用它 |
+| `[+]` | info | 正常但有话要说的进展 | `[+] using cached bangumi subject '...' (pass --refresh ...)`（`source/bangumi/subject.rs`，缓存命中时说明这次没联网） |
 | `[?]` | warn | 能继续，但结果可能不完整 | `[?] failed to open anime index '...': ...`、`[?] skip: ... not found` |
 | `[!]` | error | 这次操作失败，但程序还能正常收尾 | `[!] no anime found with bangumi id 999999999` |
 | `[x]` | fatal | 继续不下去，只能退出 | `[x] load config failed: config file 'aki.toml' not found in current directory` |
@@ -1189,6 +1198,7 @@ aki-cli (clap 解析命令)
 | [anime/mod.rs](src/anime/mod.rs)、[game/mod.rs](src/game/mod.rs) | `[?]` | `failed to load anime/game file` |
 | [anime/index/fjall.rs](src/anime/index/fjall.rs) | `[?]` | 索引打开/读取/写入/落盘失败 |
 | [anime/command/search.rs](src/anime/command/search.rs) | `[?]` | 索引不存在 / 标题表为空 / 索引没匹配到但文件扫到了（索引可能过期） |
+| [source/bangumi/subject.rs](src/source/bangumi/subject.rs) | `[+]`、`[?]` | 用了本地缓存的原始响应（`--refresh` 可重新拉）/ 缓存读不出来，退回请求 |
 | [anime/command/export_state.rs](src/anime/command/export_state.rs) | `[?]` | `meta.id` 重复，只导出最后一个 |
 | [anime/command/import_state.rs](src/anime/command/import_state.rs) | `[?]` | 数据文件不在规范路径，已改名清理 |
 | [game/command/sync_owned_games.rs](src/game/command/sync_owned_games.rs) | `[?]` | 同一 appid 出现在两个文件 / 本地还没有 owned-games.json |

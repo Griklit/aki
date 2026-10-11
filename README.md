@@ -58,8 +58,8 @@ country = "cn"
 
 ```bash
 # 番剧（别名 a）
-aki-cli anime add-with-bangumi <bangumi_id>     # 按 Bangumi ID 添加
-aki-cli anime update-with-bangumi <bangumi_id>  # 重新拉取条目，刷新元信息
+aki-cli anime add-with-bangumi <bangumi_id> [--refresh]     # 按 Bangumi ID 添加
+aki-cli anime update-with-bangumi <bangumi_id> [--refresh]  # 用条目数据刷新（不改 state）
 aki-cli anime search <关键词> [-l <条数>] [--verify-index]  # 按标题搜索（原名 + 各语言译名）
 aki-cli anime export-state -o <路径>             # 导出观看状态到 SQLite（路径必填）
 aki-cli anime import-state -i <路径> [--dry-run] # 从该文件导回（路径必填）
@@ -82,6 +82,8 @@ aki-cli bangumi search-subject -t anime --air-date ">=2026-10-01" --air-date "<2
 > `game add-with-steam` 需要能访问 `store.steampowered.com`；走代理时设置 `HTTPS_PROXY` 即可。
 >
 > `bangumi search-subject` 只查接口、不写本地数据；搜到想要的条目后，再拿 id 跑 `anime add-with-bangumi <id>` 入库。
+>
+> `anime add-with-bangumi` / `update-with-bangumi` 默认复用 `aki-data/source/bangumi/subject/<id>.json` 里的原始响应（命中时会打印一行 `[+]`，不联网）；要重新拉取就加 `--refresh`。
 
 ## 项目结构
 
