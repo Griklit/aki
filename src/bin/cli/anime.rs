@@ -64,7 +64,7 @@ pub enum AnimeSubCommands {
     AddWithBangumi(AddWithBangumi),
     /// 按 Bangumi 条目 ID 刷新动画数据（默认用本地缓存的原始响应，--refresh 才重新拉取；不改动 state）。
     UpdateWithBangumi(UpdateWithBangumi),
-    /// 重建动画索引（fjall：bangumi-id、title 与 tag 三个 keyspace）。
+    /// 重建动画索引（SQLite：meta-id、title 与 tag 三张表）。
     BuildIndex(BuildIndex),
     /// 按标题检索动画：走 title 索引，索引未建时退回扫数据文件；--tag 可按标签筛选（多个标签是「且」，可只给标签）。
     Search(Search),
@@ -100,19 +100,21 @@ impl AnimeSubCommands {
                 Ok(Some(anime.to_string()))
             }
             Self::BuildIndex(_) => {
-                let result = anime_command::build_index()?;
+                let runtime = tokio::runtime::Runtime::new()?;
+                let result = runtime.block_on(anime_command::build_index())?;
                 Ok(Some(format!(
                     "indexed {} bangumi ids, {} titles and {} tags",
                     result.bangumi_id_to_meta_id, result.title_to_meta_id, result.tag_to_meta_id
                 )))
             }
             Self::Search(args) => {
-                let animes = anime_command::search(
+                let runtime = tokio::runtime::Runtime::new()?;
+                let animes = runtime.block_on(anime_command::search(
                     args.query.as_deref().unwrap_or_default(),
                     &args.tag,
                     args.limit,
                     args.verify_index,
-                );
+                ));
                 Ok(Some(
                     animes
                         .into_iter()
@@ -122,7 +124,8 @@ impl AnimeSubCommands {
                 ))
             }
             Self::ExportState(args) => {
-                let (path, count) = anime_command::export_state(&args.output)?;
+                let runtime = tokio::runtime::Runtime::new()?;
+                let (path, count) = runtime.block_on(anime_command::export_state(&args.output))?;
                 Ok(Some(format!(
                     "exported {} anime states to {}",
                     count,
@@ -130,7 +133,9 @@ impl AnimeSubCommands {
                 )))
             }
             Self::ImportState(args) => {
-                let result = anime_command::import_state(&args.input, args.dry_run)?;
+                let runtime = tokio::runtime::Runtime::new()?;
+                let result =
+                    runtime.block_on(anime_command::import_state(&args.input, args.dry_run))?;
                 let mut lines = vec![format!(
                     "{} {} anime states ({} unchanged)",
                     if args.dry_run {

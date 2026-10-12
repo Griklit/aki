@@ -503,7 +503,7 @@ CREATE TABLE anime_state (
 5. **文件名不是规范名时会清理**：改写目标是 `meta.id` 推算出的规范文件名；如果这条数据其实是从另一个文件名读出来的（手工改过名、或从别处复制来的），写完后会删掉旧文件并打印警告——否则同一个 `meta.id` 会在目录里留下两份
 6. DB 里有、但数据目录里找不到对应条目的 `meta.id` 会作为 `unknown` 报告出来，不算错误
 
-依赖 `rusqlite`（`bundled` 特性：SQLite 源码随 crate 一起编译，不需要系统安装 SQLite）。
+依赖 `sqlx`（`sqlite` 特性：SQLite 源码随 crate 一起编译并静态链接，不需要系统安装 SQLite）。
 
 ---
 
@@ -1250,4 +1250,4 @@ aki-cli (clap 解析命令)
 | `anyhow` / `thiserror` | 错误处理 |
 | `sys-locale` | 系统语言环境检测 |
 | `fjall` | 番剧索引数据库（bangumi-id → meta.id 的键值索引） |
-| `rusqlite`（`bundled`） | 导出 state 到 SQLite；SQLite 源码随 crate 编译 |
+| `sqlx`（`sqlite`） | 番剧索引与 state 导入导出都走 SQLite；SQLite 源码随 crate 编译 |

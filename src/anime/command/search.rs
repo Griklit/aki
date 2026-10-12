@@ -2,37 +2,37 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use super::super::{Anime, AnimeNamespace, MetaId, index::AnimeIndex};
+use super::super::{Anime, AnimeNamespace, MetaId, index};
 use crate::Namespace;
 
 /// 按标题匹配字符串（可用标签筛选），返回分数最高的前 `limit` 条。
 ///
-/// 标题走 `.aki/fjall-index/` 的 `title-to-meta-id` keyspace：把整张表扫一遍做字符串
-/// 匹配，只对最终要返回的那几条去读数据文件。`tags` 非空时再用 `tag-to-meta-id` 里
-/// 的标签集合过滤，多个标签之间是「且」。
+/// 标题走 `.aki/anime-index.sqlite` 的 `titles` 表：把整张表扫一遍做字符串匹配，
+/// 只对最终要返回的那几条去读数据文件。`tags` 非空时再用 `tags`/`anime_tags` 里的
+/// 标签集合过滤，多个标签之间是「且」。
 ///
 /// `query` 为空、只给 `tags` 时，就是「按标签列番剧」：按 `meta.id` 顺序（也就是
 /// `[日期] 名字` 的日期顺序）返回，不走标题打分。
 ///
 /// 索引不存在、打不开、或者里面还没有标题/标签（没跑过对应版本的 `build-index`）时
 /// 退回扫数据目录，这样 `search` 在没有索引时依然可用，只是慢一些——这几种情况会打印
-/// 一行 `[?]` 说明为什么走了文件分支（打不开时 `open_or_warn` 已经报过原因，不再重复）。
+/// 一行 `[?]` 说明为什么走了文件分支（打不开时 `is_available` 已经报过原因，不再重复）。
 ///
 /// 索引可用但**一条都没匹配到**时，默认就到此为止（索引是权威的）。`verify_index`
 /// 为 `true` 时再扫一遍数据文件确认：索引可能落后于数据目录（手工放过文件、或加了
 /// 条目没重建索引），真扫到了就提示索引过期，并把这批文件结果返回。确认扫描要遍历
 /// 整个数据目录，所以只在显式要求时做（`aki-cli anime search --verify-index`）。
 #[must_use]
-pub fn search(query: &str, tags: &[String], limit: usize, verify_index: bool) -> Vec<Anime> {
+pub async fn search(query: &str, tags: &[String], limit: usize, verify_index: bool) -> Vec<Anime> {
     let query = query.trim();
     let tags = normalize_tags(tags);
     match (query.is_empty(), tags.is_empty()) {
         // 什么都没有：不返回整个库。
         (true, true) => Vec::new(),
         // 只按标签找。
-        (true, false) => search_by_tags(&tags, limit, verify_index),
+        (true, false) => search_by_tags(&tags, limit, verify_index).await,
         // 按标题找（标签可选，命中后再过滤）。
-        (false, _) => search_by_title(query, &tags, limit, verify_index),
+        (false, _) => search_by_title(query, &tags, limit, verify_index).await,
     }
 }
 
@@ -51,22 +51,22 @@ fn normalize_tags(tags: &[String]) -> Vec<String> {
 /// 标题搜索：先拿到「`meta.id` → 分数」，再按标签过滤，最后排序截断。
 ///
 /// 过滤放在截断**之前**，所以 `--tag` 不会让结果少于一页应有的条数。
-fn search_by_title(
+async fn search_by_title(
     query: &str,
     tags: &[String],
     limit: usize,
     verify_index: bool,
 ) -> Vec<Anime> {
-    match lookup_index(query) {
+    match lookup_index(query).await {
         // 索引里有候选：按标签过滤后排序截断。
         IndexLookup::Hits(best) => {
-            let hits = rank(filter_by_tags(best, tags), limit);
+            let hits = rank(filter_by_tags(best, tags).await, limit);
             if !hits.is_empty() || !verify_index {
                 return hits;
             }
             // 索引里一条都没有，但被要求确认：扫一遍数据文件看看。
-            let scanned = rank(filter_by_tags(file_scores(query), tags), limit);
-            let index_path = AnimeNamespace::index_path();
+            let scanned = rank(filter_by_tags(file_scores(query), tags).await, limit);
+            let index_path = AnimeNamespace::sqlite_index_path();
             if let Some(hint) = table_hint("title", State::Missed(true), scanned.len(), &index_path)
             {
                 eprintln!("[?] {hint}");
@@ -75,8 +75,8 @@ fn search_by_title(
         }
         // 索引不可用（目录不存在 / 打不开 / 表是空的）：扫数据文件，并说明原因。
         lookup @ (IndexLookup::Missing | IndexLookup::Empty | IndexLookup::Unreadable) => {
-            let scanned = rank(filter_by_tags(file_scores(query), tags), limit);
-            let index_path = AnimeNamespace::index_path();
+            let scanned = rank(filter_by_tags(file_scores(query), tags).await, limit);
+            let index_path = AnimeNamespace::sqlite_index_path();
             if let Some(hint) = fallback_hint(&lookup, scanned.len(), &index_path) {
                 eprintln!("[?] {hint}");
             }
@@ -85,15 +85,11 @@ fn search_by_title(
     }
 }
 
-/// 把候选按标签筛一遍（多个标签之间是「且」）。
-///
-/// 优先用标签索引；索引里的标签表还是空的（这份索引是加标签之前建的）时退回读数据
-/// 文件里的 `info.tags`。
-fn filter_by_tags(best: BTreeMap<String, f32>, tags: &[String]) -> BTreeMap<String, f32> {
+async fn filter_by_tags(best: BTreeMap<String, f32>, tags: &[String]) -> BTreeMap<String, f32> {
     if tags.is_empty() {
         return best;
     }
-    let hits = match lookup_tags(tags) {
+    let hits = match lookup_tags(tags).await {
         TagLookup::Hits(hits) => hits,
         _ => read_records()
             .into_iter()
@@ -105,12 +101,11 @@ fn filter_by_tags(best: BTreeMap<String, f32>, tags: &[String]) -> BTreeMap<Stri
         .filter(|(meta_id, _)| hits.contains(meta_id))
         .collect()
 }
-
 /// 按标签找番剧（多个标签之间是「且」）。
 ///
 /// 结果按 `meta.id` 排序（`[YYYY-MM-DD] 名字` 正好是日期顺序）。
-fn search_by_tags(tags: &[String], limit: usize, verify_index: bool) -> Vec<Anime> {
-    let lookup = lookup_tags(tags);
+async fn search_by_tags(tags: &[String], limit: usize, verify_index: bool) -> Vec<Anime> {
+    let lookup = lookup_tags(tags).await;
     match &lookup {
         TagLookup::Hits(hits) if !hits.is_empty() => return load_meta_ids(hits.clone(), limit),
         // 索引里没有，而又没要求确认：索引说了没有就是没有。
@@ -118,7 +113,7 @@ fn search_by_tags(tags: &[String], limit: usize, verify_index: bool) -> Vec<Anim
         _ => {}
     }
     let scanned = scan_tag_files(tags, limit);
-    let index_path = AnimeNamespace::index_path();
+    let index_path = AnimeNamespace::sqlite_index_path();
     if let Some(hint) = tag_fallback_hint(&lookup, scanned.len(), &index_path) {
         eprintln!("[?] {hint}");
     }
@@ -133,20 +128,20 @@ enum IndexLookup {
     Missing,
     /// 索引存在，但对应的表里一条数据都没有。
     Empty,
-    /// 索引打不开（[`AnimeIndex::open_or_warn`] 已经打印过原因）。
+    /// 索引打不开（[`index::is_available`] 已经打印过原因）。
     Unreadable,
 }
 
 /// 在索引的标题表上给所有候选打分；表里一条标题都没有时返回 [`IndexLookup::Empty`]。
-fn lookup_index(query: &str) -> IndexLookup {
-    if !AnimeNamespace::index_path().exists() {
+async fn lookup_index(query: &str) -> IndexLookup {
+    if !AnimeNamespace::sqlite_index_path().exists() {
         return IndexLookup::Missing;
     }
-    let Some(index) = AnimeIndex::open_or_warn() else {
+    if !index::is_available() {
         return IndexLookup::Unreadable;
-    };
-    let mut entries = index.title_entries().peekable();
-    if entries.peek().is_none() {
+    }
+    let entries = index::title_entries().await;
+    if entries.is_empty() {
         return IndexLookup::Empty;
     }
     let query = query.to_lowercase();
@@ -174,24 +169,24 @@ enum TagLookup {
     Missing,
     /// 索引存在，但标签表里一条标签都没有（这份索引是加标签之前建的）。
     Empty,
-    /// 索引打不开（[`AnimeIndex::open_or_warn`] 已经打印过原因）。
+    /// 索引打不开（[`index::is_available`] 已经打印过原因）。
     Unreadable,
 }
 
 /// 查索引的标签表，返回命中的 `meta.id` 集合（多个标签取交集）。
-fn lookup_tags(tags: &[String]) -> TagLookup {
-    if !AnimeNamespace::index_path().exists() {
+async fn lookup_tags(tags: &[String]) -> TagLookup {
+    if !AnimeNamespace::sqlite_index_path().exists() {
         return TagLookup::Missing;
     }
-    let Some(index) = AnimeIndex::open_or_warn() else {
+    if !index::is_available() {
         return TagLookup::Unreadable;
-    };
-    if !index.has_tag_entries() {
+    }
+    if !index::has_tag_entries().await {
         return TagLookup::Empty;
     }
     let mut hits: Option<BTreeSet<String>> = None;
     for tag in tags {
-        let meta_ids: BTreeSet<String> = index.meta_ids_of_tag(tag).into_iter().collect();
+        let meta_ids: BTreeSet<String> = index::meta_ids_of_tag(tag).await.into_iter().collect();
         hits = Some(match hits {
             None => meta_ids,
             Some(acc) => acc.intersection(&meta_ids).cloned().collect(),
@@ -465,7 +460,7 @@ mod tests {
     /// 提示只在「用户以为在查索引、其实没查到」时出现。
     #[test]
     fn fallback_hints_cover_the_interesting_cases() {
-        let index = Path::new("anime/.aki/fjall-index");
+        let index = Path::new("anime/.aki/anime-index.sqlite");
 
         // 索引不存在：一定提示，并给出重建命令。
         let hint = fallback_hint(&IndexLookup::Missing, 3, index).unwrap();
@@ -483,7 +478,7 @@ mod tests {
 
         // 索引没匹配到、文件也没扫到：这是「真的没有」，不是索引的问题。
         assert!(fallback_hint(&IndexLookup::Hits(BTreeMap::new()), 0, index).is_none());
-        // 打不开时 open_or_warn 已经报过原因，不再重复。
+        // 打不开时 is_available 已经报过原因，不再重复。
         assert!(fallback_hint(&IndexLookup::Unreadable, 0, index).is_none());
 
         // 标签侧同理：标签表不存在 / 是空的 → 提示重建；索引没这个标签但文件有 → 提示过期。
@@ -508,7 +503,12 @@ mod tests {
     /// 标签要先统一成「小写、去空白、去重、有序」再拿去查。
     #[test]
     fn tags_are_normalized_before_lookup() {
-        let tags = [" 奇幻 ".to_string(), "奇幻".to_string(), String::new(), "TV".to_string()];
+        let tags = [
+            " 奇幻 ".to_string(),
+            "奇幻".to_string(),
+            String::new(),
+            "TV".to_string(),
+        ];
         assert_eq!(normalize_tags(&tags), vec!["tv", "奇幻"]);
         assert!(normalize_tags(&[]).is_empty());
         assert!(normalize_tags(&["   ".to_string()]).is_empty());
@@ -525,7 +525,11 @@ mod tests {
         )
         .unwrap();
 
-        let wanted = |tags: &[&str]| tags.iter().map(|tag| (*tag).to_string()).collect::<Vec<_>>();
+        let wanted = |tags: &[&str]| {
+            tags.iter()
+                .map(|tag| (*tag).to_string())
+                .collect::<Vec<_>>()
+        };
         assert!(record.has_tags(&wanted(&["奇幻"])));
         assert!(record.has_tags(&wanted(&["tv", "shaft"]))); // 大小写不敏感
         assert!(!record.has_tags(&wanted(&["奇幻", "恋爱"]))); // 「且」
@@ -539,18 +543,18 @@ mod tests {
         assert!(!old.has_tags(&wanted(&["奇幻"])));
     }
 
-    #[test]
+    #[tokio::test]
     #[ignore = "cannot panic: only prints the hits from the local database"]
-    fn test_search() {
-        for anime in search("物语", &[], 10, true) {
+    async fn test_search() {
+        for anime in search("物语", &[], 10, true).await {
             dbg!(anime.to_string());
         }
     }
 
-    #[test]
+    #[tokio::test]
     #[ignore = "cannot panic: only prints the anime with that tag from the local database"]
-    fn test_search_by_tag() {
-        for anime in search("", &["奇幻".to_string()], 10, true) {
+    async fn test_search_by_tag() {
+        for anime in search("", &["奇幻".to_string()], 10, true).await {
             dbg!(anime.to_string());
         }
     }

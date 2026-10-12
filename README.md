@@ -10,7 +10,7 @@
 ## 环境要求
 
 - Rust（2024 edition，建议用 stable 最新版）
-- 无需系统安装 SQLite（`rusqlite` 用 `bundled` 特性）
+- 无需系统安装 SQLite（`sqlx` 用 `sqlite` 特性，内置并静态链接 SQLite）
 
 ## 构建
 

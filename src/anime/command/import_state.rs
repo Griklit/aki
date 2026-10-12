@@ -3,7 +3,7 @@ use std::fs::{self, File};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 
-use rusqlite::Connection;
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 
 use super::super::{Anime, AnimeScore, AnimeState, AnimeWatchStatus};
 
@@ -15,9 +15,9 @@ pub enum ImportStateError {
     #[error("input database not found: {}", .0.display())]
     NotFound(PathBuf),
     #[error("open sqlite database error")]
-    Open(#[source] rusqlite::Error),
+    Open(#[source] sqlx::Error),
     #[error("read sqlite database error")]
-    Read(#[source] rusqlite::Error),
+    Read(#[source] sqlx::Error),
     #[error("{} row(s) are invalid, nothing was written: {}", .0.len(), format_issues(.0))]
     InvalidRows(Vec<String>),
     #[error("write anime file error")]
@@ -64,13 +64,21 @@ FROM anime_state";
 ///
 /// 所有行先校验、再落盘：只要有一行不合法就整体不写，不会留下改了一半的数据。
 /// `dry_run` 为 `true` 时只报告会改哪些，不写任何文件。
-pub fn import_state(input: &Path, dry_run: bool) -> Result<ImportStateResult, ImportStateError> {
+pub async fn import_state(
+    input: &Path,
+    dry_run: bool,
+) -> Result<ImportStateResult, ImportStateError> {
     let path = input.to_path_buf();
     if !path.exists() {
         return Err(ImportStateError::NotFound(path));
     }
-    let connection = Connection::open(&path).map_err(ImportStateError::Open)?;
-    let states = read_states(&connection)?;
+    let options = SqliteConnectOptions::new().filename(&path);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .map_err(ImportStateError::Open)?;
+    let states = read_states(&pool).await?;
     merge(
         super::super::Anime::iter_all_with_path(),
         &states,
@@ -83,17 +91,30 @@ pub fn import_state(input: &Path, dry_run: bool) -> Result<ImportStateResult, Im
     )
 }
 
+/// `anime_state` 表的一行：列顺序与 [`SELECT_ROWS`] 一致。
+type StateRow = (
+    String,         // meta_id
+    Option<String>, // watch_status
+    Option<i64>,    // episodes_watched
+    Option<f64>,    // positive
+    Option<f64>,    // negative
+    Option<i64>,    // recommendation
+    Option<String>, // comment
+    Option<String>, // watch_start_date
+    Option<String>, // watch_finish_date
+);
+
 /// 读出全部行的 `state`。任何一行不合法都会返回 [`ImportStateError::InvalidRows`]。
-fn read_states(connection: &Connection) -> Result<BTreeMap<String, AnimeState>, ImportStateError> {
-    let mut statement = connection
-        .prepare(SELECT_ROWS)
+async fn read_states(pool: &SqlitePool) -> Result<BTreeMap<String, AnimeState>, ImportStateError> {
+    let rows: Vec<StateRow> = sqlx::query_as(SELECT_ROWS)
+        .fetch_all(pool)
+        .await
         .map_err(ImportStateError::Read)?;
-    let mut rows = statement.query([]).map_err(ImportStateError::Read)?;
 
     let mut states = BTreeMap::new();
     let mut issues = Vec::new();
-    while let Some(row) = rows.next().map_err(ImportStateError::Read)? {
-        let meta_id: String = row.get(0).map_err(ImportStateError::Read)?;
+    for row in &rows {
+        let meta_id = row.0.clone();
         match parse_state(row) {
             Ok(state) => {
                 states.insert(meta_id, state);
@@ -112,28 +133,19 @@ fn read_states(connection: &Connection) -> Result<BTreeMap<String, AnimeState>, 
 ///
 /// 这里刻意不用 `AnimeScore::new()`：它会静默把越界值 clamp 掉，而导入时
 /// 越界应该被当成错误报出来，而不是悄悄改成另一个数。
-fn parse_state(row: &rusqlite::Row<'_>) -> Result<AnimeState, String> {
-    let read = |index: usize| {
-        row.get::<_, Option<String>>(index)
-            .map_err(|e| e.to_string())
-    };
+fn parse_state(row: &StateRow) -> Result<AnimeState, String> {
+    let status = row.1.as_deref().ok_or("watch_status 不能为空")?;
+    let watch_status =
+        AnimeWatchStatus::try_from(status).map_err(|_| format!("未知的 watch_status: {status}"))?;
 
-    let status = read(1)?.ok_or("watch_status 不能为空")?;
-    let watch_status = AnimeWatchStatus::try_from(status.as_str())
-        .map_err(|_| format!("未知的 watch_status: {status}"))?;
-
-    let episodes = row
-        .get::<_, Option<i64>>(2)
-        .map_err(|e| e.to_string())?
-        .ok_or("episodes_watched 不能为空")?;
+    let episodes = row.2.ok_or("episodes_watched 不能为空")?;
     let episodes_watched =
         u16::try_from(episodes).map_err(|_| format!("episodes_watched 超出范围: {episodes}"))?;
 
-    let positive = ratio(row, 3, "positive")?;
-    let negative = ratio(row, 4, "negative")?;
+    let positive = ratio(row.3, "positive")?;
+    let negative = ratio(row.4, "negative")?;
     let recommendation = row
-        .get::<_, Option<i64>>(5)
-        .map_err(|e| e.to_string())?
+        .5
         .map(|value| {
             u8::try_from(value)
                 .ok()
@@ -150,18 +162,17 @@ fn parse_state(row: &rusqlite::Row<'_>) -> Result<AnimeState, String> {
             negative,
             recommendation,
         },
-        read(6)?,
-        date(row, 7, "watch_start_date")?,
-        date(row, 8, "watch_finish_date")?,
+        row.6.clone(),
+        date(row.7.as_deref(), "watch_start_date")?,
+        date(row.8.as_deref(), "watch_finish_date")?,
     ))
 }
 
 /// 读一个 0~1 的比例字段，越界即报错。
 // 库里的分数是 REAL(f64)，字段是 f32，这里的有意收窄是预期的。
 #[allow(clippy::cast_possible_truncation)]
-fn ratio(row: &rusqlite::Row<'_>, index: usize, name: &str) -> Result<Option<f32>, String> {
-    row.get::<_, Option<f64>>(index)
-        .map_err(|e| e.to_string())?
+fn ratio(value: Option<f64>, name: &str) -> Result<Option<f32>, String> {
+    value
         .map(|value| {
             if (0.0..=1.0).contains(&value) {
                 Ok(value as f32)
@@ -173,15 +184,10 @@ fn ratio(row: &rusqlite::Row<'_>, index: usize, name: &str) -> Result<Option<f32
 }
 
 /// 读一个 ISO 日期字段。
-fn date(
-    row: &rusqlite::Row<'_>,
-    index: usize,
-    name: &str,
-) -> Result<Option<chrono::NaiveDate>, String> {
-    row.get::<_, Option<String>>(index)
-        .map_err(|e| e.to_string())?
+fn date(value: Option<&str>, name: &str) -> Result<Option<chrono::NaiveDate>, String> {
+    value
         .map(|value| {
-            chrono::NaiveDate::parse_from_str(&value, "%Y-%m-%d")
+            chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d")
                 .map_err(|_| format!("{name} 不是合法的 YYYY-MM-DD 日期: {value}"))
         })
         .transpose()
@@ -266,6 +272,15 @@ mod tests {
     use crate::{Language, Meta};
     use chrono::NaiveDate;
 
+    /// 单连接的内存库（SQLite `:memory:` 每个连接独立，必须限制为 1 个连接）。
+    async fn in_memory() -> SqlitePool {
+        SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap()
+    }
+
     fn sample(id: &str, state: AnimeState) -> Anime {
         Anime::new(
             Meta::with_id(id.to_string(), Some(format!("{id} 中文名"))),
@@ -310,20 +325,22 @@ mod tests {
         )
     }
 
-    fn exported(states: &[(&str, AnimeState)]) -> Connection {
-        let connection = Connection::open_in_memory().unwrap();
+    async fn exported(states: &[(&str, AnimeState)]) -> SqlitePool {
+        let pool = in_memory().await;
         let animes = states
             .iter()
             .map(|(id, state)| sample(id, state.clone()))
             .collect::<Vec<_>>();
-        super::super::export_state::write_state(&connection, animes.into_iter()).unwrap();
-        connection
+        super::super::export_state::write_state(&pool, animes.into_iter())
+            .await
+            .unwrap();
+        pool
     }
 
-    #[test]
-    fn round_trips_with_export() {
-        let connection = exported(&[("a", filled_state()), ("b", empty_state())]);
-        let states = read_states(&connection).unwrap();
+    #[tokio::test]
+    async fn round_trips_with_export() {
+        let pool = exported(&[("a", filled_state()), ("b", empty_state())]).await;
+        let states = read_states(&pool).await.unwrap();
         assert_eq!(states.len(), 2);
         assert_eq!(states["a"], filled_state());
         assert_eq!(states["b"], empty_state());
@@ -396,28 +413,30 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    #[test]
-    fn rejects_rows_that_would_violate_the_schema() {
-        let connection = Connection::open_in_memory().unwrap();
+    #[tokio::test]
+    async fn rejects_rows_that_would_violate_the_schema() {
+        let pool = in_memory().await;
         super::super::export_state::write_state(
-            &connection,
+            &pool,
             std::iter::once(sample("ok", empty_state())),
         )
+        .await
         .unwrap();
-        connection
-            .execute_batch(
-                "INSERT INTO anime_state (meta_id, title, watch_status, episodes_watched, positive)
-                 VALUES ('bad-status', 'x', 'nonsense', 1, 0.5);
-                 INSERT INTO anime_state (meta_id, title, watch_status, episodes_watched, positive)
-                 VALUES ('bad-score', 'x', 'watched', 1, 9.0);
-                 INSERT INTO anime_state (meta_id, title, watch_status, episodes_watched)
-                 VALUES ('huge-episodes', 'x', 'watched', 70000);
-                 INSERT INTO anime_state (meta_id, title, watch_status, episodes_watched, watch_start_date)
-                 VALUES ('bad-date', 'x', 'watched', 1, '2024/03/01');",
-            )
-            .unwrap();
+        sqlx::raw_sql(
+            "INSERT INTO anime_state (meta_id, title, watch_status, episodes_watched, positive)
+             VALUES ('bad-status', 'x', 'nonsense', 1, 0.5);
+             INSERT INTO anime_state (meta_id, title, watch_status, episodes_watched, positive)
+             VALUES ('bad-score', 'x', 'watched', 1, 9.0);
+             INSERT INTO anime_state (meta_id, title, watch_status, episodes_watched)
+             VALUES ('huge-episodes', 'x', 'watched', 70000);
+             INSERT INTO anime_state (meta_id, title, watch_status, episodes_watched, watch_start_date)
+             VALUES ('bad-date', 'x', 'watched', 1, '2024/03/01');",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
 
-        let error = read_states(&connection).unwrap_err();
+        let error = read_states(&pool).await.unwrap_err();
         let message = error.to_string();
         assert!(message.contains("bad-status"), "{message}");
         assert!(message.contains("nonsense"), "{message}");

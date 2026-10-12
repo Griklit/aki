@@ -33,5 +33,7 @@ toml = { version = "1.1" }
 anyhow = { version = "1.0" }
 thiserror = { version = "2" }
 sys-locale = { version = "0.3" }
-fjall = { version = "3" }
-rusqlite = { version = "0.40.2", features = ["bundled"] }
+sqlx = { version = "0.9", default-features = false, features = [
+    "runtime-tokio",
+    "sqlite",
+] }

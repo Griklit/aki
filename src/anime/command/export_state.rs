@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use rusqlite::{Connection, params};
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 
 use super::super::Anime;
 
@@ -11,9 +11,9 @@ pub enum ExportStateError {
     #[error("create output directory error")]
     CreateDir(#[source] std::io::Error),
     #[error("open sqlite database error")]
-    Open(#[source] rusqlite::Error),
+    Open(#[source] sqlx::Error),
     #[error("write sqlite database error")]
-    Write(#[source] rusqlite::Error),
+    Write(#[source] sqlx::Error),
 }
 
 /// schema 版本，写在 `PRAGMA user_version` 里，便于以后改结构时判断。
@@ -39,7 +39,7 @@ const INSERT_ROW: &str = "
 INSERT INTO anime_state (
     meta_id, bangumi_id, title, title_zh, watch_status, episodes_watched,
     positive, negative, recommendation, comment, watch_start_date, watch_finish_date
-) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)";
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
 /// 把全部番剧的 `state` 导出到 `output` 指定的 `SQLite` 文件，返回（写入的文件, 行数）。
 ///
@@ -48,13 +48,20 @@ INSERT INTO anime_state (
 /// 因此结果始终是当前状态的完整快照；库里其他表不受影响。
 ///
 /// 分数按原样导出，不做范围裁剪——数据超出了字段约定的 0~1 也能看出来。
-pub fn export_state(output: &Path) -> Result<(PathBuf, usize), ExportStateError> {
+pub async fn export_state(output: &Path) -> Result<(PathBuf, usize), ExportStateError> {
     let path = output.to_path_buf();
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(ExportStateError::CreateDir)?;
     }
-    let connection = Connection::open(&path).map_err(ExportStateError::Open)?;
-    let count = write_state(&connection, Anime::iter_all())?;
+    let options = SqliteConnectOptions::new()
+        .filename(&path)
+        .create_if_missing(true);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .map_err(ExportStateError::Open)?;
+    let count = write_state(&pool, Anime::iter_all()).await?;
     Ok((path, count))
 }
 
@@ -67,8 +74,8 @@ fn real_score(value: f32) -> f64 {
 /// 把一批番剧的 state 写进已经打开的库，返回写入行数。
 ///
 /// `pub(super)` 是为了让 `import_state` 的测试能直接用它验证「导出↔导入」一致。
-pub(super) fn write_state(
-    connection: &Connection,
+pub(super) async fn write_state(
+    pool: &SqlitePool,
     animes: impl Iterator<Item = Anime>,
 ) -> Result<usize, ExportStateError> {
     // `meta.id` 是这条数据的身份，正常不会重复（重复的话文件名也会撞）。
@@ -87,45 +94,49 @@ pub(super) fn write_state(
         );
     }
 
-    connection
-        .execute_batch(&format!(
-            "PRAGMA user_version = {SCHEMA_VERSION};
-             DROP TABLE IF EXISTS anime_state;
-             {CREATE_TABLE};"
-        ))
+    // PRAGMA / DROP / CREATE 都是不能带参数的裸语句，走 `raw_sql`。
+    // `PRAGMA user_version` 不接受绑定参数，这里拼的是编译期常量，无注入风险。
+    let pragma = format!("PRAGMA user_version = {SCHEMA_VERSION}");
+    sqlx::raw_sql(sqlx::AssertSqlSafe(pragma))
+        .execute(pool)
+        .await
+        .map_err(ExportStateError::Write)?;
+    sqlx::raw_sql("DROP TABLE IF EXISTS anime_state")
+        .execute(pool)
+        .await
+        .map_err(ExportStateError::Write)?;
+    sqlx::raw_sql(CREATE_TABLE)
+        .execute(pool)
+        .await
         .map_err(ExportStateError::Write)?;
 
-    let mut statement = connection
-        .prepare(INSERT_ROW)
-        .map_err(ExportStateError::Write)?;
     let count = rows.len();
-    {
-        // 用事务包住全部插入，否则每行都要等一次 fsync。
-        let transaction = connection
-            .unchecked_transaction()
+    // 用事务包住全部插入，否则每行都要等一次 fsync。
+    let mut transaction = pool.begin().await.map_err(ExportStateError::Write)?;
+    for anime in rows.values() {
+        let state = &anime.state;
+        let score = state.score();
+        sqlx::query(INSERT_ROW)
+            .bind(&anime.meta.id.id)
+            .bind(anime.bangumi_id)
+            .bind(&anime.info.title)
+            .bind(anime.meta.data.title.as_deref())
+            .bind(state.watch_status().as_str())
+            .bind(i64::from(state.episodes_watched()))
+            .bind(score.positive.map(real_score))
+            .bind(score.negative.map(real_score))
+            .bind(score.recommendation.map(i64::from))
+            .bind(state.comment())
+            .bind(state.watch_start_date().map(|date| date.to_string()))
+            .bind(state.watch_finish_date().map(|date| date.to_string()))
+            .execute(&mut *transaction)
+            .await
             .map_err(ExportStateError::Write)?;
-        for anime in rows.values() {
-            let state = &anime.state;
-            let score = state.score();
-            statement
-                .execute(params![
-                    &anime.meta.id.id,
-                    anime.bangumi_id,
-                    &anime.info.title,
-                    anime.meta.data.title.as_deref(),
-                    state.watch_status().as_str(),
-                    i64::from(state.episodes_watched()),
-                    score.positive.map(real_score),
-                    score.negative.map(real_score),
-                    score.recommendation.map(i64::from),
-                    state.comment(),
-                    state.watch_start_date().map(|date| date.to_string()),
-                    state.watch_finish_date().map(|date| date.to_string()),
-                ])
-                .map_err(ExportStateError::Write)?;
-        }
-        transaction.commit().map_err(ExportStateError::Write)?;
     }
+    transaction
+        .commit()
+        .await
+        .map_err(ExportStateError::Write)?;
     Ok(count)
 }
 
@@ -137,6 +148,16 @@ mod tests {
     use crate::anime::{AnimeInfo, AnimeScore, AnimeState, AnimeWatchStatus};
     use crate::{Language, Meta};
     use chrono::NaiveDate;
+
+    /// 单连接的内存库。SQLite 的 `:memory:` 每个连接各自独立，必须限制为 1 个连接，
+    /// 否则建表和查询会连到不同的空库上。
+    async fn in_memory() -> SqlitePool {
+        SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap()
+    }
 
     fn sample(id: &str, bangumi_id: Option<i64>, state: AnimeState) -> Anime {
         Anime::new(
@@ -190,37 +211,36 @@ mod tests {
         )
     }
 
-    #[test]
-    fn exports_every_column() {
-        let connection = Connection::open_in_memory().unwrap();
+    type StateRow = (
+        String,
+        Option<i64>,
+        String,
+        Option<String>,
+        String,
+        i64,
+        Option<f64>,
+        Option<f64>,
+        Option<i64>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    );
+
+    #[tokio::test]
+    async fn exports_every_column() {
+        let pool = in_memory().await;
         let anime = fully_filled();
-        let count = write_state(&connection, std::iter::once(anime)).unwrap();
+        let count = write_state(&pool, std::iter::once(anime)).await.unwrap();
         assert_eq!(count, 1);
 
-        let row = connection
-            .query_row(
-                "SELECT meta_id, bangumi_id, title, title_zh, watch_status, episodes_watched,
-                        positive, negative, recommendation, comment, watch_start_date, watch_finish_date
-                 FROM anime_state",
-                [],
-                |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, Option<i64>>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, Option<String>>(3)?,
-                        row.get::<_, String>(4)?,
-                        row.get::<_, i64>(5)?,
-                        row.get::<_, Option<f64>>(6)?,
-                        row.get::<_, Option<f64>>(7)?,
-                        row.get::<_, Option<i64>>(8)?,
-                        row.get::<_, Option<String>>(9)?,
-                        row.get::<_, Option<String>>(10)?,
-                        row.get::<_, Option<String>>(11)?,
-                    ))
-                },
-            )
-            .unwrap();
+        let row: StateRow = sqlx::query_as(
+            "SELECT meta_id, bangumi_id, title, title_zh, watch_status, episodes_watched,
+                    positive, negative, recommendation, comment, watch_start_date, watch_finish_date
+             FROM anime_state",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
 
         assert_eq!(row.0, "[2020-01-01] full");
         assert_eq!(row.1, Some(265));
@@ -236,39 +256,41 @@ mod tests {
         assert_eq!(row.10.as_deref(), Some("2024-03-01"));
         assert_eq!(row.11.as_deref(), Some("2024-03-20"));
 
-        let version: i64 = connection
-            .query_row("PRAGMA user_version", [], |row| row.get(0))
+        let version: i64 = sqlx::query_scalar("PRAGMA user_version")
+            .fetch_one(&pool)
+            .await
             .unwrap();
         assert_eq!(version, SCHEMA_VERSION);
     }
 
-    #[test]
-    fn missing_fields_become_null() {
-        let connection = Connection::open_in_memory().unwrap();
-        write_state(&connection, std::iter::once(mostly_empty())).unwrap();
+    #[tokio::test]
+    async fn missing_fields_become_null() {
+        type Row = (
+            Option<i64>,
+            Option<String>,
+            String,
+            i64,
+            Option<f64>,
+            Option<f64>,
+            Option<i64>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        );
 
-        let row = connection
-            .query_row(
-                "SELECT bangumi_id, title_zh, watch_status, episodes_watched, positive,
-                        negative, recommendation, comment, watch_start_date, watch_finish_date
-                 FROM anime_state",
-                [],
-                |row| {
-                    Ok((
-                        row.get::<_, Option<i64>>(0)?,
-                        row.get::<_, Option<String>>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, i64>(3)?,
-                        row.get::<_, Option<f64>>(4)?,
-                        row.get::<_, Option<f64>>(5)?,
-                        row.get::<_, Option<i64>>(6)?,
-                        row.get::<_, Option<String>>(7)?,
-                        row.get::<_, Option<String>>(8)?,
-                        row.get::<_, Option<String>>(9)?,
-                    ))
-                },
-            )
+        let pool = in_memory().await;
+        write_state(&pool, std::iter::once(mostly_empty()))
+            .await
             .unwrap();
+
+        let row: Row = sqlx::query_as(
+            "SELECT bangumi_id, title_zh, watch_status, episodes_watched, positive,
+                    negative, recommendation, comment, watch_start_date, watch_finish_date
+             FROM anime_state",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
 
         assert_eq!(row.0, None);
         assert_eq!(row.1.as_deref(), Some("[2021-02-02] empty 中文名"));
@@ -282,40 +304,51 @@ mod tests {
         assert_eq!(row.9, None);
     }
 
-    #[test]
-    fn rebuilding_replaces_rows_but_keeps_other_tables() {
-        let connection = Connection::open_in_memory().unwrap();
-        connection
-            .execute_batch("CREATE TABLE keep_me (id INTEGER); INSERT INTO keep_me VALUES (7);")
+    #[tokio::test]
+    async fn rebuilding_replaces_rows_but_keeps_other_tables() {
+        let pool = in_memory().await;
+        sqlx::raw_sql("CREATE TABLE keep_me (id INTEGER); INSERT INTO keep_me VALUES (7);")
+            .execute(&pool)
+            .await
             .unwrap();
 
-        write_state(&connection, [fully_filled(), mostly_empty()].into_iter()).unwrap();
-        let first: i64 = connection
-            .query_row("SELECT COUNT(*) FROM anime_state", [], |row| row.get(0))
+        write_state(&pool, [fully_filled(), mostly_empty()].into_iter())
+            .await
+            .unwrap();
+        let first: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM anime_state")
+            .fetch_one(&pool)
+            .await
             .unwrap();
         assert_eq!(first, 2);
 
         // 再导出一次，且这次只有一条：应当是快照，不是追加。
-        let count = write_state(&connection, std::iter::once(fully_filled())).unwrap();
+        let count = write_state(&pool, std::iter::once(fully_filled()))
+            .await
+            .unwrap();
         assert_eq!(count, 1);
-        let second: i64 = connection
-            .query_row("SELECT COUNT(*) FROM anime_state", [], |row| row.get(0))
+        let second: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM anime_state")
+            .fetch_one(&pool)
+            .await
             .unwrap();
         assert_eq!(second, 1);
 
-        let kept: i64 = connection
-            .query_row("SELECT id FROM keep_me", [], |row| row.get(0))
+        let kept: i64 = sqlx::query_scalar("SELECT id FROM keep_me")
+            .fetch_one(&pool)
+            .await
             .unwrap();
         assert_eq!(kept, 7);
     }
 
-    #[test]
-    fn duplicated_meta_id_keeps_one_row() {
-        let connection = Connection::open_in_memory().unwrap();
-        let count = write_state(&connection, [fully_filled(), fully_filled()].into_iter()).unwrap();
+    #[tokio::test]
+    async fn duplicated_meta_id_keeps_one_row() {
+        let pool = in_memory().await;
+        let count = write_state(&pool, [fully_filled(), fully_filled()].into_iter())
+            .await
+            .unwrap();
         assert_eq!(count, 1);
-        let rows: i64 = connection
-            .query_row("SELECT COUNT(*) FROM anime_state", [], |row| row.get(0))
+        let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM anime_state")
+            .fetch_one(&pool)
+            .await
             .unwrap();
         assert_eq!(rows, 1);
     }
