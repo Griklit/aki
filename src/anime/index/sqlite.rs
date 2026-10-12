@@ -180,17 +180,40 @@ pub async fn has_tag_entries() -> bool {
     exists != 0
 }
 
-/// 遍历整个 `id_title` 表，返回 `(标题, meta.id)`。
+/// 标题表里有没有东西（用来区分「索引里真的没有标题」和「这份索引是建标题之前建的」）。
 #[must_use]
-pub async fn title_entries() -> Vec<(String, String)> {
+pub async fn has_title_entries() -> bool {
+    let Some(pool) = POOL.as_ref() else {
+        return false;
+    };
+    let (exists,): (i64,) = sqlx::query_as("SELECT EXISTS(SELECT 1 FROM id_title LIMIT 1)")
+        .fetch_one(pool)
+        .await
+        .unwrap_or((0,));
+    exists != 0
+}
+
+/// 按标题在索引里匹配，返回命中的 `(meta.id, 标题)`。
+///
+/// 匹配在 SQL 内完成（`instr` 做子串匹配，等价于 `str::contains`，且不受 `%`/`_`
+/// 通配符干扰），只把命中的标题读回内存；打分留在 Rust 里做——打分在 SQL 与 Rust 里
+/// 算没有区别，Rust 反而更快。
+#[must_use]
+pub async fn meta_ids_of_title(query: &str) -> Vec<(String, String)> {
     let Some(pool) = POOL.as_ref() else {
         return Vec::new();
     };
+    let query = query.trim().to_lowercase();
+    if query.is_empty() {
+        return Vec::new();
+    }
     sqlx::query_as(
-        "SELECT t.title, a.meta_id
+        "SELECT a.meta_id, t.title
          FROM id_title t
-         JOIN anime a ON a.id = t.id",
+         JOIN anime a ON a.id = t.id
+         WHERE instr(lower(t.title), ?) > 0",
     )
+    .bind(&query)
     .fetch_all(pool)
     .await
     .unwrap_or_default()

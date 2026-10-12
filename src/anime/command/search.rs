@@ -132,7 +132,8 @@ enum IndexLookup {
     Unreadable,
 }
 
-/// 在索引的标题表上给所有候选打分；表里一条标题都没有时返回 [`IndexLookup::Empty`]。
+/// 在索引的标题表上按标题匹配（匹配在 SQL 内完成，打分在 Rust 里做）；
+/// 表里一条标题都没有时返回 [`IndexLookup::Empty`]。
 async fn lookup_index(query: &str) -> IndexLookup {
     if !AnimeNamespace::sqlite_index_path().exists() {
         return IndexLookup::Missing;
@@ -140,15 +141,13 @@ async fn lookup_index(query: &str) -> IndexLookup {
     if !index::is_available() {
         return IndexLookup::Unreadable;
     }
-    let entries = index::title_entries().await;
-    if entries.is_empty() {
+    if !index::has_title_entries().await {
         return IndexLookup::Empty;
     }
-    let query = query.to_lowercase();
     // 同一个 `meta.id` 有多个标题时取最高分。
     let mut best: BTreeMap<String, f32> = BTreeMap::new();
-    for (title, meta_id) in entries {
-        let Some(score) = score_title(&title, &query) else {
+    for (meta_id, title) in index::meta_ids_of_title(query).await {
+        let Some(score) = score_title(&title, query) else {
             continue;
         };
         match best.get(&meta_id) {
