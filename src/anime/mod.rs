@@ -204,7 +204,7 @@ impl fmt::Display for Anime {
             }) = trans
                 && trans_title != &self.info.title
             {
-                format!("{} ({})", &trans_title, &self.info.title).into()
+                format!("{} ({})", trans_title, self.info.title).into()
             } else {
                 Cow::from(&self.info.title)
             }
@@ -222,7 +222,7 @@ impl From<Subject> for Anime {
             subject
                 .date
                 .map_or("unknown".to_string(), |d| d.format("%Y-%m-%d").to_string()),
-            &subject.name
+            subject.name
         );
         let mut i18n = BTreeMap::new();
         let name_language = Language::detect_from(&subject.name);

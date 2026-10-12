@@ -178,7 +178,7 @@ impl fmt::Display for Game {
             }) = trans
                 && trans_title != &self.info.title
             {
-                format!("{} ({})", &trans_title, &self.info.title).into()
+                format!("{} ({})", trans_title, self.info.title).into()
             } else {
                 Cow::from(&self.info.title)
             }

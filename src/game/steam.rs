@@ -139,7 +139,7 @@ impl From<AppDetails> for Game {
             release
                 .as_ref()
                 .map_or_else(|| "unknown".to_string(), GameRelease::date_prefix),
-            &title
+            title
         );
         let cover = app.header_image.clone();
         let screenshots = app
