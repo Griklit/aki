@@ -122,9 +122,8 @@ fn extract_checked(body: &str, appid: u32) -> Result<(AppDetails, String), Steam
 /// 两种形状都不是合法 JSON，或请求的 appid 不存在（下架/锁区）时返回错误。
 fn extract_app_details(body: &str, appid: u32) -> Result<serde_json::Value, SteamRequestError> {
     // 先判断是不是老式外壳：外壳的标志是顶层有数字 appid 作为键。
-    let is_envelope = serde_json::from_str::<BTreeMap<String, serde_json::Value>>(body)
-        .ok()
-        .is_some_and(|map| {
+    let is_envelope =
+        serde_json::from_str::<BTreeMap<String, serde_json::Value>>(body).is_ok_and(|map| {
             map.keys()
                 .any(|key| key.chars().all(|c| c.is_ascii_digit()))
         });

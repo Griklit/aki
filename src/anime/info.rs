@@ -16,10 +16,12 @@ pub struct AnimeInfo {
 }
 
 impl AnimeInfo {
+    #[must_use]
     pub fn air_date_formatter(date: &NaiveDate) -> String {
-        date.format("%Y-%M-%D").to_string()
+        date.to_string()
     }
 
+    #[must_use]
     pub fn air_date_string(&self) -> Option<String> {
         self.air_date.map(|date| Self::air_date_formatter(&date))
     }

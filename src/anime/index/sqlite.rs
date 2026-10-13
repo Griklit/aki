@@ -296,7 +296,7 @@ async fn insert_anime(
 /// 插入/更新 `anime` 行，返回其自增 id。
 ///
 /// 更新条目时 `meta.id` 可能被重算（`update-with-bangumi`），而 `bangumi_id` 是唯一的：
-/// 先把指向同一 `bangumi_id` 的旧行删掉（其 id_title/id_tag 由外键级联清掉），再按
+/// 先把指向同一 `bangumi_id` 的旧行删掉（其 `id_title/id_tag` 由外键级联清掉），再按
 /// `meta_id` upsert，避免两个 `meta_id` 抢同一个 UNIQUE `bangumi_id`。
 async fn upsert_meta(
     tx: &mut Transaction<'_, Sqlite>,
