@@ -179,6 +179,35 @@ impl Anime {
             })
     }
 
+    /// 按文件名（也就是 `meta.id` 的字典序，文件名即 `meta.id + ".json"`）排序后遍历。
+    ///
+    /// [`Self::iter_all`] 的遍历顺序依赖文件系统，重建索引时若直接用它会带着自增 id
+    /// 一起走这个不稳定的顺序。这里先只收集文件路径并排序，再逐条读取，让插入顺序与
+    /// `meta.id` 一致，同时不把全部 [`Anime`] 一次性读进内存。
+    pub fn iter_all_sorted() -> impl Iterator<Item = Anime> {
+        let anime_dir = AnimeNamespace::data_path();
+        let mut paths: Vec<PathBuf> = std::fs::read_dir(anime_dir)
+            .ok()
+            .into_iter()
+            .flatten()
+            .filter_map(|entry| {
+                let entry = entry.ok()?;
+                let path = entry.path();
+                (path.extension()?.to_str()? == "json").then_some(path)
+            })
+            .collect();
+        paths.sort();
+        paths
+            .into_iter()
+            .filter_map(|path| match Self::load(&path) {
+                Ok(anime) => Some(anime),
+                Err(e) => {
+                    eprintln!("[?] failed to load anime file '{}': {}", path.display(), e);
+                    None
+                }
+            })
+    }
+
     #[must_use]
     pub fn bangumi_subject(&self) -> Option<Result<Subject, io::Error>> {
         Some(Subject::load_with_id(self.bangumi_id?))

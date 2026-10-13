@@ -146,7 +146,7 @@ async fn lookup_index(query: &str) -> IndexLookup {
     }
     // 同一个 `meta.id` 有多个标题时取最高分。
     let mut best: BTreeMap<String, f32> = BTreeMap::new();
-    for (meta_id, title) in index::meta_ids_of_title(query).await {
+    for (meta_id, title) in index::match_meta_ids_of_title(query).await {
         let Some(score) = score_title(&title, query) else {
             continue;
         };
@@ -185,7 +185,8 @@ async fn lookup_tags(tags: &[String]) -> TagLookup {
     }
     let mut hits: Option<BTreeSet<String>> = None;
     for tag in tags {
-        let meta_ids: BTreeSet<String> = index::meta_ids_of_tag(tag).await.into_iter().collect();
+        let meta_ids: BTreeSet<String> =
+            index::get_meta_ids_of_tag(tag).await.into_iter().collect();
         hits = Some(match hits {
             None => meta_ids,
             Some(acc) => acc.intersection(&meta_ids).cloned().collect(),

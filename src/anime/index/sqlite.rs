@@ -5,7 +5,7 @@
 //!
 //! | 表 | 列 | 用途 |
 //! |----|----|----|
-//! | `anime` | `id`(自增), `meta_id`, `bangumi_id` | 自增 id ↔ meta-id，`meta_id`/`bangumi_id` 带索引可反查 id |
+//! | `anime` | `id`(自增), `meta_id`, `title`, `air_date`, `bangumi_id` | 自增 id ↔ meta-id，`meta_id`/`bangumi_id`/`air_date` 带索引可反查 id |
 //! | `id_title` | `id`(FK), `language`, `title` | 条目 id ↔ (language, title) |
 //! | `id_tag` | `id`(FK), `tag` | 条目 id ↔ tag，`tag` 带索引 |
 //!
@@ -95,11 +95,15 @@ async fn initialize_schema(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         "CREATE TABLE IF NOT EXISTS anime (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             meta_id TEXT NOT NULL UNIQUE,
+            air_date TEXT,
             bangumi_id INTEGER UNIQUE
         )",
     )
     .execute(pool)
     .await?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_anime_air_date ON anime(air_date)")
+        .execute(pool)
+        .await?;
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS id_title (
             id INTEGER NOT NULL REFERENCES anime(id) ON DELETE CASCADE,
@@ -148,7 +152,7 @@ pub async fn get_meta_id_of_bangumi_id(bangumi_id: i64) -> Option<String> {
 ///
 /// `id_tag` 里按 `tag` 定位到条目 id，再 join `anime` 取 `meta_id`。
 #[must_use]
-pub async fn meta_ids_of_tag(tag: &str) -> Vec<String> {
+pub async fn get_meta_ids_of_tag(tag: &str) -> Vec<String> {
     let Some(pool) = POOL.as_ref() else {
         return Vec::new();
     };
@@ -199,7 +203,7 @@ pub async fn has_title_entries() -> bool {
 /// 通配符干扰），只把命中的标题读回内存；打分留在 Rust 里做——打分在 SQL 与 Rust 里
 /// 算没有区别，Rust 反而更快。
 #[must_use]
-pub async fn meta_ids_of_title(query: &str) -> Vec<(String, String)> {
+pub async fn match_meta_ids_of_title(query: &str) -> Vec<(String, String)> {
     let Some(pool) = POOL.as_ref() else {
         return Vec::new();
     };
@@ -249,7 +253,7 @@ pub async fn build() -> Result<BuildResult, sqlx::Error> {
     let mut title_keys = 0;
     let mut tag_keys = 0;
     let mut errors = Vec::new();
-    for anime in Anime::iter_all() {
+    for anime in Anime::iter_all_sorted() {
         match insert_anime(pool, &anime).await {
             Ok((has_bangumi, titles, tags)) => {
                 if has_bangumi {
@@ -275,7 +279,14 @@ async fn insert_anime(
     anime: &Anime,
 ) -> Result<(bool, usize, usize), sqlx::Error> {
     let mut tx = pool.begin().await?;
-    let anime_id = upsert_meta_id(&mut tx, anime.meta.id.id.as_str(), anime.bangumi_id).await?;
+    let air_date = anime.info.air_date.as_ref().map(ToString::to_string);
+    let anime_id = upsert_meta_id(
+        &mut tx,
+        anime.meta.id.id.as_str(),
+        air_date.as_deref(),
+        anime.bangumi_id,
+    )
+    .await?;
     let titles = rebuild_titles(&mut tx, anime_id, anime).await?;
     let tags = rebuild_tags(&mut tx, anime_id, anime).await?;
     tx.commit().await?;
@@ -290,6 +301,7 @@ async fn insert_anime(
 async fn upsert_meta_id(
     tx: &mut Transaction<'_, Sqlite>,
     meta_id: &str,
+    air_date: Option<&str>,
     bangumi_id: Option<i64>,
 ) -> Result<i64, sqlx::Error> {
     if let Some(bangumi_id) = bangumi_id {
@@ -300,10 +312,13 @@ async fn upsert_meta_id(
             .await?;
     }
     sqlx::query(
-        "INSERT INTO anime (meta_id, bangumi_id) VALUES (?, ?)
-         ON CONFLICT(meta_id) DO UPDATE SET bangumi_id = excluded.bangumi_id",
+        "INSERT INTO anime (meta_id, air_date, bangumi_id) VALUES (?, ?, ?)
+         ON CONFLICT(meta_id) DO UPDATE SET
+             air_date = excluded.air_date,
+             bangumi_id = excluded.bangumi_id",
     )
     .bind(meta_id)
+    .bind(air_date)
     .bind(bangumi_id)
     .execute(&mut **tx)
     .await?;
