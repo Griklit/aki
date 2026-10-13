@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use super::super::{Anime, AnimeInfoInternationalization, AnimeNamespace, SaveAnimeError, index};
+use super::super::{Anime, AnimeInternationalization, AnimeNamespace, SaveAnimeError, index};
 use crate::source::bangumi::{LoadOrRequestError, Subject};
 use crate::{Language, MetaId};
 
@@ -164,8 +164,8 @@ fn refresh_with_subject(anime: &mut Anime, subject: Subject) {
 /// 因此：用户自备的语言（如英文）不会被碰；两个字段都是空的「空壳语言」不会被新建；
 /// 已有的语言条目也不会因为这次没数据而被删掉。
 fn merge_internationalizations(
-    existing: &mut BTreeMap<Language, AnimeInfoInternationalization>,
-    fresh: BTreeMap<Language, AnimeInfoInternationalization>,
+    existing: &mut BTreeMap<Language, AnimeInternationalization>,
+    fresh: BTreeMap<Language, AnimeInternationalization>,
 ) {
     for (language, fresh) in fresh {
         // 接口对「没有这个语言的标题」给的是空串（没有中文名的条目 `name_cn` 就是 `""`），
@@ -177,7 +177,7 @@ fn merge_internationalizations(
         }
         let entry = existing
             .entry(language)
-            .or_insert_with(|| AnimeInfoInternationalization::new(None, None));
+            .or_insert_with(|| AnimeInternationalization::new(None, None));
         if title.is_some() {
             entry.title = title;
         }
@@ -192,7 +192,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::*;
-    use crate::anime::{AnimeInfo, AnimeInfoInternationalization, AnimeState};
+    use crate::anime::{AnimeInfo, AnimeInternationalization, AnimeState};
     use crate::{Language, Meta};
 
     fn subject_example() -> Subject {
@@ -229,7 +229,7 @@ mod tests {
             },
             BTreeMap::from([(
                 Language::EnUs,
-                AnimeInfoInternationalization::new(Some("Old Title".to_string()), None),
+                AnimeInternationalization::new(Some("Old Title".to_string()), None),
             )]),
             state,
             Some(bangumi_id),
@@ -347,7 +347,7 @@ mod tests {
         let mut anime = outdated_anime(subject.id);
         anime.internationalizations.insert(
             Language::ZhCn,
-            AnimeInfoInternationalization::new(
+            AnimeInternationalization::new(
                 Some("旧中文名".to_string()),
                 Some("我自己写的简介".to_string()),
             ),
@@ -374,7 +374,7 @@ mod tests {
         let mut anime = outdated_anime(subject.id);
         anime.internationalizations.insert(
             Language::ZhCn,
-            AnimeInfoInternationalization::new(
+            AnimeInternationalization::new(
                 Some("旧中文名".to_string()),
                 Some("我自己写的简介".to_string()),
             ),

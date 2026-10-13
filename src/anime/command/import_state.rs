@@ -268,7 +268,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::*;
-    use crate::anime::{AnimeInfo, AnimeInfoInternationalization};
+    use crate::anime::{AnimeInfo, AnimeInternationalization};
     use crate::{Language, Meta};
     use chrono::NaiveDate;
 
@@ -293,7 +293,7 @@ mod tests {
                 episodes: Some(12),
                 tags: Vec::new(),
             },
-            BTreeMap::<Language, AnimeInfoInternationalization>::new(),
+            BTreeMap::<Language, AnimeInternationalization>::new(),
             state,
             Some(265),
         )

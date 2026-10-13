@@ -15,17 +15,12 @@ pub struct AnimeInfo {
     // pub cover: Option<Resource<resource_type::Cover>>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct AnimeInfoInternationalization {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub summary: Option<String>,
-}
+impl AnimeInfo {
+    pub fn air_date_formatter(date: &NaiveDate) -> String {
+        date.format("%Y-%M-%D").to_string()
+    }
 
-impl AnimeInfoInternationalization {
-    #[must_use]
-    pub const fn new(title: Option<String>, summary: Option<String>) -> Self {
-        Self { title, summary }
+    pub fn air_date_string(&self) -> Option<String> {
+        self.air_date.map(|date| Self::air_date_formatter(&date))
     }
 }

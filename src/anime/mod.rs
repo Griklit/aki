@@ -1,13 +1,15 @@
 pub mod command;
 pub mod index;
 mod info;
+mod internationlization;
 mod namespace;
 mod score;
 mod state;
 
 use crate::source::bangumi::Subject;
 use crate::{CONFIG, Language, Meta, MetaId, Namespace};
-pub use info::{AnimeInfo, AnimeInfoInternationalization};
+pub use info::AnimeInfo;
+pub use internationlization::AnimeInternationalization;
 pub use namespace::AnimeNamespace;
 pub use score::AnimeScore;
 use serde::{Deserialize, Serialize};
@@ -25,7 +27,7 @@ pub struct Anime {
     pub meta: Meta<AnimeNamespace>,
     pub info: AnimeInfo,
     #[serde(rename = "i18n")]
-    pub internationalizations: BTreeMap<Language, AnimeInfoInternationalization>,
+    pub internationalizations: BTreeMap<Language, AnimeInternationalization>,
     pub state: AnimeState,
     pub bangumi_id: Option<i64>,
 }
@@ -53,7 +55,7 @@ impl Anime {
     pub fn new(
         meta: Meta<AnimeNamespace>,
         info: AnimeInfo,
-        internationalizations: BTreeMap<Language, AnimeInfoInternationalization>,
+        internationalizations: BTreeMap<Language, AnimeInternationalization>,
         state: AnimeState,
         bangumi_id: Option<i64>,
     ) -> Self {
@@ -227,7 +229,7 @@ impl fmt::Display for Anime {
         )?;
         let title: Cow<str> = if let Ok(language) = language {
             let trans = self.internationalizations.get(&language);
-            if let Some(AnimeInfoInternationalization {
+            if let Some(AnimeInternationalization {
                 title: Some(trans_title),
                 ..
             }) = trans
@@ -259,7 +261,7 @@ impl From<Subject> for Anime {
         if name_language == summary_language {
             i18n.insert(
                 name_language,
-                AnimeInfoInternationalization::new(
+                AnimeInternationalization::new(
                     Some(subject.name.clone()),
                     Some(subject.summary.clone()),
                 ),
@@ -267,17 +269,17 @@ impl From<Subject> for Anime {
         } else {
             i18n.insert(
                 name_language,
-                AnimeInfoInternationalization::new(Some(subject.name.clone()), None),
+                AnimeInternationalization::new(Some(subject.name.clone()), None),
             );
             i18n.insert(
                 summary_language,
-                AnimeInfoInternationalization::new(None, Some(subject.summary.clone())),
+                AnimeInternationalization::new(None, Some(subject.summary.clone())),
             );
         }
         // 由于name_cn的特殊性，故此处单独处理zh-cn
         i18n.entry(Language::ZhCn)
             .and_modify(|v| v.title = Some(subject.name_cn.clone()))
-            .or_insert(AnimeInfoInternationalization::new(
+            .or_insert(AnimeInternationalization::new(
                 Some(subject.name_cn.clone()),
                 None,
             ));
@@ -322,17 +324,17 @@ mod tests {
                 // 与原名重复（中文原创番就是这样：`name` == `name_cn`）
                 (
                     Language::ZhCn,
-                    AnimeInfoInternationalization::new(Some("原名".to_string()), None),
+                    AnimeInternationalization::new(Some("原名".to_string()), None),
                 ),
                 // 空标题：跳过
                 (
                     Language::JaJp,
-                    AnimeInfoInternationalization::new(Some("   ".to_string()), None),
+                    AnimeInternationalization::new(Some("   ".to_string()), None),
                 ),
                 // 真正不同的译名
                 (
                     Language::EnUs,
-                    AnimeInfoInternationalization::new(Some("Original Title".to_string()), None),
+                    AnimeInternationalization::new(Some("Original Title".to_string()), None),
                 ),
             ]),
             AnimeState::default(),

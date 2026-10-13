@@ -171,7 +171,7 @@ mod tests {
                 episodes: Some(12),
                 tags: Vec::new(),
             },
-            BTreeMap::<Language, crate::anime::AnimeInfoInternationalization>::new(),
+            BTreeMap::<Language, crate::anime::AnimeInternationalization>::new(),
             state,
             bangumi_id,
         )

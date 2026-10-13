@@ -22,6 +22,7 @@ use sqlx::sqlite::{Sqlite, SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 
 use super::super::{Anime, AnimeNamespace};
 use crate::Language;
+use crate::anime::AnimeInfo;
 
 /// 进程内共享的 SQLite 连接池。SQLite 是单写者，连接数设 1 就够；打不开（目录建不出、
 /// 数据库打不开）时置 `None`，所有查询退化成「没有索引」。
@@ -279,11 +280,10 @@ async fn insert_anime(
     anime: &Anime,
 ) -> Result<(bool, usize, usize), sqlx::Error> {
     let mut tx = pool.begin().await?;
-    let air_date = anime.info.air_date.as_ref().map(ToString::to_string);
-    let anime_id = upsert_meta_id(
+    let anime_id = upsert_meta(
         &mut tx,
         anime.meta.id.id.as_str(),
-        air_date.as_deref(),
+        anime.info.air_date.as_ref(),
         anime.bangumi_id,
     )
     .await?;
@@ -298,10 +298,10 @@ async fn insert_anime(
 /// 更新条目时 `meta.id` 可能被重算（`update-with-bangumi`），而 `bangumi_id` 是唯一的：
 /// 先把指向同一 `bangumi_id` 的旧行删掉（其 id_title/id_tag 由外键级联清掉），再按
 /// `meta_id` upsert，避免两个 `meta_id` 抢同一个 UNIQUE `bangumi_id`。
-async fn upsert_meta_id(
+async fn upsert_meta(
     tx: &mut Transaction<'_, Sqlite>,
     meta_id: &str,
-    air_date: Option<&str>,
+    air_date: Option<&chrono::NaiveDate>,
     bangumi_id: Option<i64>,
 ) -> Result<i64, sqlx::Error> {
     if let Some(bangumi_id) = bangumi_id {
@@ -318,7 +318,7 @@ async fn upsert_meta_id(
              bangumi_id = excluded.bangumi_id",
     )
     .bind(meta_id)
-    .bind(air_date)
+    .bind(air_date.map(AnimeInfo::air_date_formatter))
     .bind(bangumi_id)
     .execute(&mut **tx)
     .await?;
