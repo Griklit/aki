@@ -3,9 +3,7 @@ use serde::{Deserialize, Serialize};
 
 /// 发售日期。
 ///
-/// 游戏不像番剧那样总有精确到日的播出日期：Steam 会给「2024」「2025 年 第 1 季度」
-/// 「即将推出」这类只有粒度的值，所以不能直接塞进 `NaiveDate`。
-/// [`MetaId`](crate::MetaId) 的 id 前缀只取 [`Self::date_prefix`]。
+/// 游戏发售日期粒度不一（年份/年月/季度等），不能用 `NaiveDate` 表示。
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum GameRelease {
@@ -92,9 +90,9 @@ pub struct GameInfo {
     /// 封面图 URL（Steam 的 `header_image`）。
     pub cover: Option<String>,
     pub screenshots: Vec<String>,
-    /// 外部评分（Metacritic 等）。项目自身的评分在 `state` 里，由用户手填。
+    /// 外部评分（Metacritic 等）。
     pub external_score: Option<ExternalScore>,
-    /// 评论总数（Steam 的 `recommendations.total`）。
+    /// 评论总数。
     pub review_count: Option<u32>,
 }
 

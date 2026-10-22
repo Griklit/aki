@@ -35,7 +35,7 @@ pub fn detect_year(raw: &str) -> Option<i32> {
         .find(|year| (1900..=2100).contains(year))
 }
 
-/// 找出字符串里的月名。只认月名而不是数字，避免把日号当成月份。
+/// 找出字符串里的月名。
 #[must_use]
 pub fn detect_month(raw: &str) -> Option<u8> {
     let lower = raw.to_lowercase();
@@ -46,10 +46,6 @@ pub fn detect_month(raw: &str) -> Option<u8> {
 }
 
 /// 从 `raw[..end]` 的末尾取出连续的数字（先跳过空白）。
-///
-/// 显式循环，避免依赖 `take_while` 对 `char::is_ascii_digit` 这类
-/// 函数指针/闭包的推断。`"2013 年 7 月"` 的 `月` 之前是 `" 7 "`，
-/// 所以必须先跳掉紧邻的空格，否则一个数字都取不到。
 fn trailing_digits(raw: &str, end: usize) -> String {
     let mut digits: Vec<char> = Vec::new();
     let mut seen_digit = false;
@@ -98,9 +94,6 @@ pub fn detect_quarter(raw: &str) -> Option<u8> {
 }
 
 /// 日号：排除年份和月份之后，第一个落在 [1, 31] 的数字。
-///
-/// 「年 + 月」这种没有日号的字符串因此不会被误判成某一天
-/// （`"Jan 2024"` 里的 2024 被年份排除，没有别的候选）。
 fn detect_day(raw: &str, year: Option<i32>, month: Option<u8>) -> Option<u32> {
     let year = year.and_then(|y| u32::try_from(y).ok());
     raw.split(|c: char| !c.is_ascii_digit())
@@ -110,10 +103,6 @@ fn detect_day(raw: &str, year: Option<i32>, month: Option<u8>) -> Option<u32> {
 }
 
 /// 从脏字符串里尽量解析出「年-月-日」，粒度不足时返回 `None`。
-///
-/// 支持 `"9 Jul, 2013"`、`"Jul 9, 2013"`、`"22 August 2024"`、`"2013 年 7 月 9 日"`；
-/// `"2024"`、`"Jan 2024"`、`"2025 年 第 1 季度"`、`"即将推出"` 返回 `None`，
-/// 由 [`GameRelease`](crate::game::GameRelease) 用别的粒度表示。
 #[must_use]
 pub fn parse_date(raw: &str) -> Option<NaiveDate> {
     let year = detect_year(raw)?;

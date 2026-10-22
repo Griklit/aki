@@ -43,11 +43,7 @@ INSERT INTO anime_state (
 
 /// 把全部番剧的 `state` 导出到 `output` 指定的 `SQLite` 文件，返回（写入的文件, 行数）。
 ///
-/// `output` 是必填的，不给默认位置——导出到哪由调用方明确决定。
-/// 每次运行都会重建 `anime_state` 表（`DROP TABLE IF EXISTS` + `CREATE`），
-/// 因此结果始终是当前状态的完整快照；库里其他表不受影响。
-///
-/// 分数按原样导出，不做范围裁剪——数据超出了字段约定的 0~1 也能看出来。
+/// `output` 为必填。每次运行都重建 `anime_state` 表，结果始终是当前状态的完整快照。
 pub async fn export_state(output: &Path) -> Result<(PathBuf, usize), ExportStateError> {
     let path = output.to_path_buf();
     if let Some(parent) = path.parent() {
@@ -65,15 +61,12 @@ pub async fn export_state(output: &Path) -> Result<(PathBuf, usize), ExportState
     Ok((path, count))
 }
 
-/// f32 的 `0.8` 转成 f64 会变成 `0.800000011920929`。取到 6 位小数，让库里的
-/// 数值和 JSON 里写的一致，`WHERE positive = 0.8` 这类查询才不会意外落空。
+/// 把 f32 分数取到 6 位小数，避免浮点误差。
 fn real_score(value: f32) -> f64 {
     (f64::from(value) * 1_000_000.0).round() / 1_000_000.0
 }
 
-/// 把一批番剧的 state 写进已经打开的库，返回写入行数。
-///
-/// `pub(super)` 是为了让 `import_state` 的测试能直接用它验证「导出↔导入」一致。
+/// 把一批番剧的 state 写进已打开的库，返回写入行数。
 pub(super) async fn write_state(
     pool: &SqlitePool,
     animes: impl Iterator<Item = Anime>,
@@ -149,8 +142,7 @@ mod tests {
     use crate::{Language, Meta};
     use chrono::NaiveDate;
 
-    /// 单连接的内存库。SQLite 的 `:memory:` 每个连接各自独立，必须限制为 1 个连接，
-    /// 否则建表和查询会连到不同的空库上。
+    /// 单连接的内存库。
     async fn in_memory() -> SqlitePool {
         SqlitePoolOptions::new()
             .max_connections(1)

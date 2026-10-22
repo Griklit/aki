@@ -32,8 +32,6 @@ pub fn app_details_path(appid: u32) -> PathBuf {
 }
 
 /// 把 Steam 的脏日期字段转成 [`GameRelease`]。
-///
-/// 精度按 日 → 年月 → 年+季度 → 年 → 原文 依次降级，任何一步都不丢信息。
 #[must_use]
 pub fn parse_release(release_date: &model::ReleaseDate) -> GameRelease {
     if release_date.coming_soon {
@@ -57,19 +55,15 @@ pub fn parse_release(release_date: &model::ReleaseDate) -> GameRelease {
 
 /// 解析 Steam 的 appdetails 响应，得到 [`AppDetails`]。
 ///
-/// 两种形状都认（裸条目与 `{"<appid>":{"success":true,"data":{...}}}` 外壳），
-/// 具体判断在 [`Endpoint::parse`] 里，所以联网与离线走的是同一套逻辑。
+/// 两种响应形状都认（裸条目与 `{"<appid>":{"success":true,"data":{...}}}` 外壳）。
 ///
 /// # Errors
-/// JSON 非法、缺少必要字段、或响应里的 appid 与请求不一致时返回错误。
+/// JSON 非法、缺少必要字段、或 appid 与请求不一致时返回错误。
 pub fn parse_app_details(body: &str, appid: u32) -> Result<AppDetails, SteamRequestError> {
     AppDetailsEndpoint::new(appid).parse(body)
 }
 
-/// 解析落盘的原始响应文件（`database/steam/appdetails427520.json` 之类）。
-///
-/// 文件里存的是响应原文，与 [`parse_app_details`] 完全同一份内容，
-/// 保留这个名字只是为了调用处读起来更清楚。
+/// 解析落盘的原始响应文件。
 ///
 /// # Errors
 /// 同 [`parse_app_details`]。
@@ -85,11 +79,7 @@ pub fn app_details_to_game(body: &str, appid: u32) -> Result<Game, SteamRequestE
     Ok(Game::from(parse_app_details(body, appid)?))
 }
 
-/// 请求一条 appdetails，并把**原始响应**存到
-/// `database/steam/appdetails/{appid}.json`（和 Bangumi 存 `Subject` 原样响应同理）。
-///
-/// 存的是响应里的 `data` 原文，不是解析后再序列化的结果，所以没进结构体的字段
-/// （价格、配置需求、DLC 列表等）也在文件里，以后补字段可以离线重跑。
+/// 请求一条 appdetails，并把原始响应存到 `database/steam/appdetails/{appid}.json`。
 ///
 /// # Errors
 /// 网络失败、Steam 返回非 2xx、响应不是期望的形状、或落盘失败时返回错误。
@@ -111,9 +101,6 @@ pub async fn request_app_details(
 }
 
 /// 从 `database/steam/appdetails/{appid}.json` 离线读回并解析。
-///
-/// 文件里存的是 `data` 原文，所以走 [`parse_app_details_data`] 而不是
-/// [`parse_app_details`]。
 ///
 /// # Errors
 /// 文件不存在、读取失败、JSON 非法或缺少必要字段时返回错误。

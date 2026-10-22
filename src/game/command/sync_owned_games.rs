@@ -34,7 +34,7 @@ pub struct SyncRecord {
     pub error: Option<String>,
     pub created: bool,
     pub existing: bool,
-    /// 已拥有、但还没有数据文件（`--no-create`，或建条目的那次请求失败）。
+    /// 已拥有、但还没有数据文件。
     pub pending: bool,
 }
 
@@ -64,7 +64,7 @@ impl SyncResult {
         self.records.iter().filter(|r| !r.filled.is_empty()).count()
     }
 
-    /// 真的出错的条目（不含「还没有数据文件」这种正常情况）。
+    /// 出错的条目数。
     #[must_use]
     pub fn failed(&self) -> usize {
         self.records.iter().filter(|r| r.error.is_some()).count()
@@ -89,12 +89,10 @@ pub enum SyncOwnedGamesError {
 
 /// 拉取「已拥有游戏」，**只填 `state` 里为空的字段**，手填的值一律保留。
 ///
-/// `create_missing` 为 `true` 时，给库里还没有条目的游戏补建 `Game`
-/// （每条之间隔 [`REQUEST_INTERVAL`]）；为 `false` 时不动数据文件。
+/// `create_missing` 为 `true` 时，给库里还没有条目的游戏补建 `Game`；为 `false` 时不动数据文件。
 ///
 /// # Errors
-/// 拉列表失败、原始响应落盘失败时返回错误；单条 appdetails 失败只记进
-/// [`SyncRecord::error`]，不会中断整个同步。
+/// 拉列表失败、原始响应落盘失败时返回错误；单条 appdetails 失败只记进 [`SyncRecord::error`]。
 pub async fn sync_owned_games(
     client: &reqwest::Client,
     create_missing: bool,
@@ -178,7 +176,7 @@ fn sync_existing(game: &OwnedGame, meta_id: &str, path: &PathBuf) -> SyncRecord 
     record
 }
 
-/// 新建条目：先拉 appdetails（拿名称/发售日期等），再填 Steam 的时长。
+/// 新建条目：先拉 appdetails，再填 Steam 的时长。
 async fn create_game(client: &reqwest::Client, owned: &OwnedGame) -> SyncRecord {
     let mut record = record_of(owned);
     let app = match steam::request_app_details(client, owned.appid).await {

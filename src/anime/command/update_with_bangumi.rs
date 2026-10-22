@@ -8,7 +8,7 @@ use crate::{Language, MetaId};
 
 #[derive(Debug, thiserror::Error)]
 pub enum UpdateWithBangumiError {
-    /// 取条目失败：请求接口或把响应落盘出错（缓存读不出来只会退回请求并警告）。
+    /// 取条目失败：请求接口或把响应落盘出错。
     #[error("load or request bangumi subject error")]
     FetchSubject(#[source] LoadOrRequestError),
     #[error("no anime found with bangumi id {0}")]
@@ -25,9 +25,7 @@ pub enum UpdateWithBangumiError {
 
 /// 按 Bangumi ID 找到已有番剧，并用最新条目刷新它。
 ///
-/// 条目数据优先用本地已经存过的原始响应（见 [`Subject::load_or_request_with_id`]），
-/// `refresh` 为 `true` 时忽略缓存、重新请求——对「更新」来说这一项尤其重要：
-/// 不加 `--refresh` 时用的是上次存下来的响应，不会真的重新拉。
+/// 条目数据优先用本地已缓存的原始响应，`refresh` 为 `true` 时忽略缓存、重新请求。
 pub async fn update_with_bangumi(
     client: &reqwest::Client,
     bangumi_id: i64,
@@ -60,10 +58,7 @@ pub async fn update_with_bangumi(
     Ok(anime)
 }
 
-/// 这个文件里装的是不是同一个条目（同 `meta.id` 且同 `bangumi_id`）。
-///
-/// 数据文件的名字由 `meta.id` 推出来，但历史遗留的文件名可能对不上（改名失败、手工改名），
-/// 于是同一个条目会存在两份。读不动的文件一律当成「别人的」，不去覆盖。
+/// 判断文件里装的是不是同一个条目（同 `meta.id` 且同 `bangumi_id`）。
 fn is_same_entry(path: &Path, anime: &Anime) -> bool {
     Anime::load(path).is_ok_and(|existing| {
         existing.meta.id.id == anime.meta.id.id && existing.bangumi_id == anime.bangumi_id
@@ -72,11 +67,7 @@ fn is_same_entry(path: &Path, anime: &Anime) -> bool {
 
 /// 找出 `bangumi_id` 唯一对应的番剧，并返回它当前的数据文件路径。
 ///
-/// 先查索引；未命中或已失效（文件被改名、删除）时回退到遍历数据目录，并把找到的
-/// 映射写回索引。
-///
-/// 返回的第二个值是**这次真正读了哪个文件**，而不是「按 `meta.id` 反推出来的规范路径」：
-/// 两者在文件被手工改名、或历史遗留了旧名字时会不一致，而写完之后要删掉的正是前者。
+/// 先查索引；未命中或已失效时回退到遍历数据目录，并把找到的映射写回索引。
 async fn find_exclusive_anime(bangumi_id: i64) -> Result<(Anime, PathBuf), UpdateWithBangumiError> {
     if let Some(meta_id) = index::get_meta_id_of_bangumi_id(bangumi_id).await
         && let Some(found) = load_indexed(bangumi_id, &meta_id)
@@ -110,8 +101,7 @@ async fn find_exclusive_anime(bangumi_id: i64) -> Result<(Anime, PathBuf), Updat
 
 /// 按索引里的 `meta_id` 读取番剧，并确认它确实属于该 `bangumi_id`。
 ///
-/// 顺带把「读的是哪个文件」一起返回：索引里的 `meta_id` 推出路径，文件内容里的
-/// `meta.id` 可能已经不是它了（上一次改名只写没删），删除旧文件时要认前者。
+/// 返回 `(番剧, 实际读取的文件路径)`。
 fn load_indexed(bangumi_id: i64, meta_id: &str) -> Option<(Anime, PathBuf)> {
     let meta_id = MetaId::<AnimeNamespace>::with_id(meta_id.to_string());
     let path = meta_id.json_data_path();
@@ -121,11 +111,10 @@ fn load_indexed(bangumi_id: i64, meta_id: &str) -> Option<(Anime, PathBuf)> {
 
 /// 用 Bangumi 的最新条目刷新 `anime` 中由 Bangumi 提供的部分。
 ///
-/// - `meta.id`、`info` 与 `bangumi_id` 取自最新条目；
-/// - `meta.data.title` 只在最新条目给出了**非空** `name_cn` 时才覆盖（接口对没有中文名
-///   的条目的 `name_cn` 是空串，`From<Subject>` 会把它变成 `Some("")`）；
-/// - `i18n` 见 [`merge_internationalizations`]，逐语言、逐字段合并；
-/// - 由用户填写的 `state` 与记录创建时间 `meta.data.create_time` 保持不变。
+/// - `meta.id`、`info`、`bangumi_id` 取自最新条目；
+/// - `meta.data.title` 只在最新条目给出**非空** `name_cn` 时才覆盖；
+/// - `i18n` 逐语言、逐字段合并（见 [`merge_internationalizations`]）；
+/// - 用户填写的 `state` 与 `create_time` 保持不变。
 fn refresh_with_subject(anime: &mut Anime, subject: Subject) {
     let fresh: Anime = subject.into();
     anime.meta.id = fresh.meta.id;
@@ -142,17 +131,12 @@ fn refresh_with_subject(anime: &mut Anime, subject: Subject) {
 
 /// 把最新条目的 `i18n` 合并进已有数据，**逐语言**并**逐字段**（`title` / `summary`）判断。
 ///
-/// `From<Subject>` 给出的每个语言条目只带它那一门语言真正有的东西，另一个字段是 `None`
-/// （例如原名是日文、简介是中文时，日文条目只有 `title`，中文条目只有 `summary`），
-/// 所以整条替换会把 Bangumi 这次没提到的字段一起抹掉。按字段合并的规则是：
-///
-/// | 最新条目在这一门语言给的字段 | 处理 |
+/// | 最新条目在这一语言给的字段 | 处理 |
 /// |------------------------------|------|
 /// | 非空值 | 覆盖，标题与简介以最新条目为准 |
-/// | `None` 或空串 | 保留原值——它可能是用户自己补的翻译，不能因为这次没给就清掉 |
+/// | `None` 或空串 | 保留原值 |
 ///
-/// 因此：用户自备的语言（如英文）不会被碰；两个字段都是空的「空壳语言」不会被新建；
-/// 已有的语言条目也不会因为这次没数据而被删掉。
+/// 用户自备的语言不会被碰；两个字段都为空的语言不会被新建；已有语言条目不会因本次没数据而被删。
 fn merge_internationalizations(
     existing: &mut BTreeMap<Language, AnimeInternationalization>,
     fresh: BTreeMap<Language, AnimeInternationalization>,
@@ -189,7 +173,7 @@ mod tests {
         serde_json::from_str(include_str!("../../source/bangumi/subject-example.json")).unwrap()
     }
 
-    /// 拿样本条目改出 `name` / `name_cn` / `summary` 三件套，用来验证语言检测与合并。
+    /// 拿样本条目改出 `name` / `name_cn` / `summary` 三件套。
     fn subject_with(name: &str, name_cn: &str, summary: &str) -> Subject {
         let mut value: serde_json::Value =
             serde_json::from_str(include_str!("../../source/bangumi/subject-example.json"))
@@ -237,8 +221,7 @@ mod tests {
         );
     }
 
-    /// 目标文件名被同一个条目的**另一份副本**占着时不算冲突——那是上次改名没删干净的
-    /// 遗留，覆盖它并把旧的那份清掉才是对的。
+    /// 目标文件名被同一个条目的另一份副本占着时不算冲突。
     #[test]
     fn same_entry_is_not_a_conflict() {
         let dir = std::env::temp_dir().join(format!("aki-same-entry-{}", uuid::Uuid::now_v7()));
@@ -325,8 +308,7 @@ mod tests {
             })
     }
 
-    /// 原名是日文、简介也是日文时，最新条目只给中文标题（`name_cn`），
-    /// 中文简介是用户自己写的——按字段合并必须更新标题、**留下**简介。
+    /// 按字段合并：只更新 Bangumi 给出的字段，用户自填的字段保留。
     #[test]
     fn i18n_merge_only_touches_the_fields_bangumi_provides() {
         let subject = subject_with(
@@ -381,7 +363,7 @@ mod tests {
         assert_eq!(anime.meta.data.title, meta_title_before);
     }
 
-    /// 空壳语言不新建：Bangumi 只给了日文时，不该凭空多出一个空的中文条目。
+    /// 两个字段都为空的语言条目不会被新建。
     #[test]
     fn i18n_merge_does_not_create_empty_entries() {
         let subject = subject_with("〈物語〉シリーズ", "", "西尾維新のライトノベル。");

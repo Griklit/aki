@@ -18,11 +18,7 @@ pub enum AppType {
     Other,
 }
 
-/// `release_date`。Steam 的 `date` 是脏字符串，这里同时保留原文和「能解析到哪一步」。
-///
-/// - `date`：精确到日（如 `"9 Jul, 2013"`、`"2013 年 7 月 9 日"`）时才有值
-/// - `year` / `month` / `quarter`：只有粒度时填哪一级
-/// - `date_text`：Steam 原文，解析不出来时用它兜底，不丢信息
+/// `release_date`。Steam 的 `date` 是脏字符串，这里同时保留原文和解析结果。
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ReleaseDate {
     #[serde(default)]
@@ -62,8 +58,7 @@ where
     Ok(raw.as_deref().and_then(super::date::parse_steam_date))
 }
 
-/// 反序列化 `release_date`：把脏的 `date` 字符串同时喂给
-/// [`ReleaseDate::new`]，这样年月与原文都能留下来。
+/// 反序列化 `release_date`。
 fn deserialize_release_date<'de, D>(deserializer: D) -> Result<Option<ReleaseDate>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -189,8 +184,7 @@ pub struct OwnedGame {
     pub appid: u32,
     #[serde(default)]
     pub name: Option<String>,
-    /// 总游玩时长，单位：分钟（Steam 原始单位）。用 `i64` 是因为 Steam 会给出
-    /// `-1` 之类的哨兵值，用 `u32` 会让整个响应反序列化失败。
+    /// 总游玩时长，单位：分钟（Steam 原始单位）。
     #[serde(default)]
     pub playtime_forever: i64,
     /// 最近两周游玩时长，单位：分钟。

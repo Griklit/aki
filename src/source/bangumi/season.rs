@@ -7,9 +7,6 @@ use chrono::{Datelike, Local};
 const QUARTER_MONTHS: [u32; 4] = [1, 4, 7, 10];
 
 /// 番剧的一个季度：1 月 / 4 月 / 7 月 / 10 月开播的那三个月。
-///
-/// 例如「2026 年 1 月番」= 2026-01-01 ~ 2026-03-31，用接口的 `air_date` 条件表达就是
-/// `>=2026-01-01` 且 `<2026-04-01`（上界取开区间，正好把 3.31 包含进来）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Season {
     year: i32,
@@ -27,7 +24,7 @@ pub enum SeasonParseError {
 }
 
 impl Season {
-    /// `quarter` 取 1~4（1 月 / 4 月 / 7 月 / 10 月开播），年份限制在 1900~2100。
+    /// `quarter` 取 1~4，年份限制在 1900~2100。
     #[must_use]
     pub fn new(year: i32, quarter: u8) -> Option<Self> {
         ((1..=4).contains(&quarter) && (1900..=2100).contains(&year))
@@ -66,7 +63,7 @@ impl Season {
         u32::from(self.quarter) * 3 - 2
     }
 
-    /// 下一个季度（10 月番的下一个是明年 1 月番）。
+    /// 下一个季度。
     #[must_use]
     pub fn next(self) -> Self {
         if self.quarter == 4 {
@@ -82,7 +79,7 @@ impl Season {
         }
     }
 
-    /// 上一个季度（1 月番的上一个是去年 10 月番）。
+    /// 上一个季度。
     #[must_use]
     pub fn prev(self) -> Self {
         if self.quarter == 1 {
@@ -99,8 +96,6 @@ impl Season {
     }
 
     /// 接口 `air_date` 用的两个条件：`[">=本季首日", "<下季首日"]`。
-    ///
-    /// 上界是开区间，所以 1 月番正好覆盖到 3.31。
     #[must_use]
     pub fn air_date_filter(self) -> [String; 2] {
         let next = self.next();

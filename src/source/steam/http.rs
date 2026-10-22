@@ -39,39 +39,31 @@ pub enum SteamRequestError {
 }
 
 /// 一个 Steam 接口：路径、查询参数、响应类型、以及响应体怎么变成结果。
-///
-/// 用 trait 而不是给每个接口写一遍请求函数，是因为它们只有这四点不同；
-/// 加一个新接口只需要实现它，请求与错误处理只有 [`request`] 一份。
 pub trait Endpoint {
-    /// 解析出来的结果类型（不一定等于响应体本身，例如商店接口要先拆 `{appid: {...}}`）。
+    /// 解析出来的结果类型。
     type Response;
 
     /// 拼在 base 后面的路径，如 `/ISteamUser/GetPlayerSummaries/v2/`。
     fn path(&self) -> String;
 
-    /// 查询参数。密钥不在这里拼，由 [`request`] 统一追加。
+    /// 查询参数。
     fn params(&self) -> Vec<(&'static str, String)>;
 
     /// `true` 用 Web API（`api.steampowered.com`），`false` 用商店接口。
     fn use_web_api(&self) -> bool;
 
-    /// 需要密钥的接口返回 `true`；密钥为空时不追加，由解析或状态码报错。
+    /// 需要密钥的接口返回 `true`。
     fn needs_api_key(&self) -> bool {
         false
     }
 
-    /// 要落盘的**原始响应**。默认不落盘。
-    ///
-    /// 覆盖它的接口负责自己校验响应（大多数实现会复用 [`Self::parse`]，
-    /// 校验通过再返回原文），因为调用方拿到 `Ok(Some(_))` 就直接存盘了。
+    /// 要落盘的原始响应，默认不落盘。
     fn raw_body(&self, body: &str) -> Result<Option<String>, SteamRequestError> {
         let _ = body;
         Ok(None)
     }
 
-    /// 发请求前的参数校验，默认什么都不检查。
-    ///
-    /// 例如「必须配置 SteamID」这类前提，在这里报错比带空参数请求更好。
+    /// 发请求前的参数校验，默认不检查。
     fn validate(&self) -> Result<(), SteamRequestError> {
         Ok(())
     }
@@ -100,10 +92,7 @@ pub async fn request<E: Endpoint>(
     Ok(response)
 }
 
-/// 同 [`request`]，但同时给出要落盘的原始响应（endpoint 未要求落盘时为 `None`）。
-///
-/// 落盘的必须是**响应原文**，而不是解析后再序列化的结果——后者会丢掉没进
-/// 结构体的字段，就没法和 Bangumi 那样「存原样、以后离线重跑解析」了。
+/// 同 [`request`]，但同时给出要落盘的原始响应（未要求落盘时为 `None`）。
 ///
 /// # Errors
 /// 同 [`request`]，另外包含落盘文本校验失败的情况。
@@ -162,7 +151,7 @@ pub async fn request_with_raw<E: Endpoint>(
     }
 }
 
-/// 解析成 `T`，并把 JSON 错误统一包装起来（[`request`] 会补上 URL 与响应片段）。
+/// 解析成 `T`，并把 JSON 错误统一包装。
 pub fn parse_json<T: DeserializeOwned>(body: &str) -> Result<T, SteamRequestError> {
     serde_json::from_str(body).map_err(|source| SteamRequestError::Parse {
         source,

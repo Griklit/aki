@@ -84,14 +84,7 @@ impl Anime {
             .collect()
     }
 
-    /// 这条番剧的全部标题（原标题 + 各语言翻译标题），**已去重**。
-    ///
-    /// 索引与搜索都以它为「这条番剧有哪些标题」的唯一来源。去重是必要的：同一部番的
-    /// 原名与某个语言的译名常常一模一样（中文原创番、`name_cn` 与原名相同等），不去重
-    /// 的话同一个标题会被写两次索引，`build-index` 报出来的标题数也会虚高。
-    ///
-    /// 保留首次出现的顺序与写法（`BTreeMap` 按 [`Language`] 的声明顺序遍历），空标题
-    /// 会被跳过（索引键不能为空，空字符串也不值得拿去匹配）。
+    /// 这条番剧的全部标题（原标题 + 各语言翻译标题），已去重，空标题跳过。
     pub fn all_titles(&self) -> impl Iterator<Item = &str> {
         let mut seen = HashSet::new();
         let mut titles = Vec::new();
@@ -156,9 +149,6 @@ impl Anime {
     }
 
     /// 与 [`Self::iter_all`] 相同，但同时给出每条数据是从哪个文件读出来的。
-    ///
-    /// 需要原地改写这条数据的命令用它，才能区分「文件就在规范路径上」和
-    /// 「文件名与 `meta.id` 不一致」这两种情况。
     pub fn iter_all_with_path() -> impl Iterator<Item = (PathBuf, Anime)> {
         let anime_dir = AnimeNamespace::data_path();
         std::fs::read_dir(anime_dir)
@@ -181,11 +171,7 @@ impl Anime {
             })
     }
 
-    /// 按文件名（也就是 `meta.id` 的字典序，文件名即 `meta.id + ".json"`）排序后遍历。
-    ///
-    /// [`Self::iter_all`] 的遍历顺序依赖文件系统，重建索引时若直接用它会带着自增 id
-    /// 一起走这个不稳定的顺序。这里先只收集文件路径并排序，再逐条读取，让插入顺序与
-    /// `meta.id` 一致，同时不把全部 [`Anime`] 一次性读进内存。
+    /// 按文件名（`meta.id` 的字典序）排序后遍历。
     pub fn iter_all_sorted() -> impl Iterator<Item = Anime> {
         let anime_dir = AnimeNamespace::data_path();
         let mut paths: Vec<PathBuf> = std::fs::read_dir(anime_dir)
@@ -355,7 +341,7 @@ mod tests {
         dbg!(anime);
     }
 
-    /// 条目里的标签按接口给的顺序（使用人数降序）进 `info.tags`，只留名字。
+    /// 条目标签按接口给的顺序进 `info.tags`，只留名字。
     #[test]
     fn tags_come_from_the_subject() {
         let subject: Subject =
@@ -371,7 +357,7 @@ mod tests {
         );
     }
 
-    /// 老数据文件里没有 `tags` 字段，读的时候应当当成空列表而不是报错。
+    /// 缺少 `tags` 字段时按空列表处理。
     #[test]
     fn tags_default_to_empty_for_old_files() {
         let subject: Subject =

@@ -3,7 +3,7 @@ use crate::source::bangumi::{LoadOrRequestError, Subject};
 
 #[derive(Debug, thiserror::Error)]
 pub enum AddWithBangumiError {
-    /// 取条目失败：请求接口或把响应落盘出错（缓存读不出来只会退回请求并警告）。
+    /// 取条目失败：请求接口或把响应落盘出错。
     #[error("load or request bangumi subject error")]
     FetchSubject(#[source] LoadOrRequestError),
     #[error("save anime error")]
@@ -12,8 +12,7 @@ pub enum AddWithBangumiError {
 
 /// 按 Bangumi ID 添加番剧。
 ///
-/// 条目数据优先用本地已经存过的原始响应（见 [`Subject::load_or_request_with_id`]），
-/// `refresh` 为 `true` 时忽略缓存、重新请求。
+/// 条目数据优先用本地已缓存的原始响应，`refresh` 为 `true` 时忽略缓存、重新请求。
 pub async fn add_with_bangumi(
     client: &reqwest::Client,
     bangumi_id: i64,

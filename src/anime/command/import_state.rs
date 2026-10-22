@@ -58,11 +58,8 @@ FROM anime_state";
 
 /// 从 `input` 指定的数据库读回 `state` 并更新对应的番剧数据文件。
 ///
-/// `input` 是必填的，不给默认位置——从哪读由调用方明确决定。
-/// 只改 `state`，`info` / `i18n` / `meta` / `bangumi_id` 一律不碰；`state`
-/// 与文件里完全一致的条目会被跳过，不会白写一遍文件。
-///
-/// 所有行先校验、再落盘：只要有一行不合法就整体不写，不会留下改了一半的数据。
+/// 只改 `state`，其余字段一律不碰；`state` 与文件完全一致的条目会被跳过。
+/// 所有行先校验、再落盘：只要有一行不合法就整体不写。
 /// `dry_run` 为 `true` 时只报告会改哪些，不写任何文件。
 pub async fn import_state(
     input: &Path,
@@ -129,10 +126,7 @@ async fn read_states(pool: &SqlitePool) -> Result<BTreeMap<String, AnimeState>, 
     }
 }
 
-/// 把一行解析成 [`AnimeState`]，出错时返回可以直接读的原因。
-///
-/// 这里刻意不用 `AnimeScore::new()`：它会静默把越界值 clamp 掉，而导入时
-/// 越界应该被当成错误报出来，而不是悄悄改成另一个数。
+/// 把一行解析成 [`AnimeState`]，出错时返回可直接读的原因。
 fn parse_state(row: &StateRow) -> Result<AnimeState, String> {
     let status = row.1.as_deref().ok_or("watch_status 不能为空")?;
     let watch_status =
@@ -194,9 +188,6 @@ fn date(value: Option<&str>, name: &str) -> Result<Option<chrono::NaiveDate>, St
 }
 
 /// 把 DB 里的 state 合并到番剧上；只有确实变了的条目才会调用 `on_change`。
-///
-/// 每一项都带上「这条数据是从哪个文件读出来的」，`on_change` 拿到它才能原地
-/// 改写、并在文件名不规范时清理旧文件。与 [`CONFIG`] 无关，可脱离真实数据目录测试。
 fn merge(
     entries: impl Iterator<Item = (PathBuf, Anime)>,
     states: &BTreeMap<String, AnimeState>,
@@ -226,16 +217,12 @@ fn merge(
     Ok(result)
 }
 
-/// 先写临时文件再改名覆盖，避免写到一半失败把已有的数据文件写坏。
-///
-/// 目标是 `meta.id` 推算出的规范文件名。如果数据其实是从另一个文件名读出来的
-/// （手工改过名、或是从别处复制来的），写完后会把那个旧文件删掉——否则同一个
-/// `meta.id` 会在数据目录里留下两份。
+/// 先写临时文件再改名覆盖，避免写到一半失败把已有数据文件写坏。
 fn write_anime(loaded_path: &Path, anime: &Anime) -> Result<(), ImportStateError> {
     write_anime_at(&anime.meta.id.json_data_path(), loaded_path, anime)
 }
 
-/// 真正的落盘逻辑。`target` 由调用方给出，测试才能脱离真实数据目录验证。
+/// 落盘到 `target`，若原文件不在规范路径则删除旧文件。
 fn write_anime_at(
     target: &Path,
     loaded_path: &Path,
@@ -272,7 +259,7 @@ mod tests {
     use crate::{Language, Meta};
     use chrono::NaiveDate;
 
-    /// 单连接的内存库（SQLite `:memory:` 每个连接独立，必须限制为 1 个连接）。
+    /// 单连接的内存库。
     async fn in_memory() -> SqlitePool {
         SqlitePoolOptions::new()
             .max_connections(1)
@@ -387,8 +374,7 @@ mod tests {
         assert_eq!(result.unknown, vec!["gone".to_string()]);
     }
 
-    /// 数据文件如果不在规范路径上（手工改过名、或从别处复制来的），改写后
-    /// 必须把旧文件清掉，否则同一个 `meta.id` 会在目录里留下两份。
+    /// 数据文件不在规范路径时，改写后必须把旧文件清掉。
     #[test]
     fn writes_canonically_and_removes_the_outdated_file() {
         let dir = std::env::temp_dir().join(format!("aki-import-{}", uuid::Uuid::now_v7()));

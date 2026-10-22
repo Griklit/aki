@@ -21,8 +21,6 @@ impl Namespace for AnimeNamespace {
 
 impl AnimeNamespace {
     /// SQLite 索引数据库文件：`{data_path}/.aki/anime-index.sqlite`。
-    ///
-    /// SQLite 索引是一个单文件数据库，所以这里直接给到文件路径，而不是目录。
     #[must_use]
     pub fn sqlite_index_path() -> PathBuf {
         Self::data_path().join(".aki").join("anime-index.sqlite")

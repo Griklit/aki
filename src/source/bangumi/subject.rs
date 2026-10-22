@@ -1,5 +1,5 @@
-use std::{fs::File, io};
 use std::path::PathBuf;
+use std::{fs::File, io};
 
 use super::BangumiNamespace;
 use crate::CONFIG;
@@ -15,48 +15,30 @@ pub enum LoadOrRequestError {
     Save(#[source] io::Error),
 }
 
-/// Collection
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Collection {
-    /// Collect
     pub collect: i64,
-    /// Doing
     pub doing: i64,
-    /// Dropped
     pub dropped: i64,
-    /// On Hold
     pub on_hold: i64,
-    /// Wish
     pub wish: i64,
 }
 
-/// Images
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Images {
-    /// Common
     pub common: String,
-    /// Grid
     pub grid: String,
-    /// Large
     pub large: String,
-    /// Medium
     pub medium: String,
-    /// Small
     pub small: String,
 }
 
-/// Infobox
-///
-/// Item
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Item {
-    /// Key
     pub key: String,
-    /// Value
     pub value: Value,
 }
 
-/// Value
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Value {
@@ -64,31 +46,20 @@ pub enum Value {
     Array(Vec<ValueArrayItem>),
 }
 
-/// KV
-///
-/// V
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValueArrayItem {
-    /// K
     pub k: Option<String>,
-    /// V
     pub v: String,
 }
 
-/// Rating
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Rating {
-    /// Count
     pub count: Count,
-    /// Rank
     pub rank: i64,
-    /// Score
     pub score: f64,
-    /// Total
     pub total: i64,
 }
 
-/// Count
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Count {
     #[serde(rename = "1")]
@@ -113,14 +84,9 @@ pub struct Count {
     pub ten: Option<i64>,
 }
 
-/// Tags
-///
-/// Tag
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Tag {
-    /// Count
     pub count: i64,
-    /// Name
     pub name: String,
 }
 
@@ -173,7 +139,6 @@ impl Type {
     }
 }
 
-/// Subject
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Subject {
     pub id: i64,
@@ -226,24 +191,17 @@ impl Subject {
         Self::load_from_path(&BangumiNamespace::subject_path(id))
     }
 
-    /// 从指定文件读条目。分成一个吃路径的函数，是为了让「缓存优先」那段逻辑能在
-    /// 测试里用临时文件验证，而不必碰真实数据目录。
+    /// 从指定文件读条目。
     fn load_from_path(path: &std::path::Path) -> Result<Self, io::Error> {
         let file = File::open(path)?;
         let subject: Subject = serde_json::from_reader(file)?;
         Ok(subject)
     }
 
-    /// 取条目数据：本地已经存过原始响应就用本地的，没有（或要求刷新）才请求接口。
-    ///
-    /// 这就是「原始响应先落盘」的用处之一——不但是解析改错时的回放来源，也是离线复用：
-    /// 同一份响应没必要为了 `add-with-bangumi` / `update-with-bangumi` 反复拉。缓存命中时
-    /// 打印一行 `[+]`，好让用户知道这次没有联网（要重新拉就加 `--refresh`）。
-    ///
-    /// 缓存文件读不出来（被改坏、写到一半）时打印一行 `[?]` 并退回请求，而不是直接失败。
+    /// 取条目数据：本地已有缓存就用本地的，没有（或要求刷新）才请求接口。
     ///
     /// # Errors
-    /// 请求接口失败、或请求成功后落盘失败时返回错误。
+    /// 请求接口失败、或落盘失败时返回错误。
     pub async fn load_or_request_with_id(
         client: &reqwest::Client,
         subject_id: i64,
@@ -258,8 +216,7 @@ impl Subject {
         .await
     }
 
-    /// [`Self::load_or_request_with_id`] 的实现。`path` 由调用方给出，测试才能脱离
-    /// 真实数据目录验证「有缓存就不请求」。
+    /// [`Self::load_or_request_with_id`] 的实现，`path` 由调用方给出。
     async fn load_or_request_at(
         client: &reqwest::Client,
         subject_id: i64,
@@ -312,9 +269,6 @@ impl Subject {
     }
 
     /// 按语言挑一个名字：中文环境优先用 `name_cn`，其余语言用原名。
-    ///
-    /// 接口没有英文名字段，所以 `EnUs` 也只会拿到原名。`name_cn` 为空时同样退回原名，
-    /// 因此结果**保证非空**（原名是必填字段）。
     #[must_use]
     pub fn localized_name(&self, language: crate::Language) -> &str {
         match language {
@@ -345,16 +299,10 @@ mod tests {
         assert!(subject.date.is_none());
     }
 
-    /// `code()` 与 `TryFrom<i64>` 必须互为反向，否则筛选条件和展示会对不上。
+    /// `code()` 与 `TryFrom<i64>` 互为反向。
     #[test]
     fn type_code_round_trips() {
-        for subject_type in [
-            Type::Book,
-            Type::Anime,
-            Type::Music,
-            Type::Game,
-            Type::Real,
-        ] {
+        for subject_type in [Type::Book, Type::Anime, Type::Music, Type::Game, Type::Real] {
             assert_eq!(Type::try_from(subject_type.code()).unwrap(), subject_type);
             assert!(!subject_type.as_str().is_empty());
         }
@@ -378,23 +326,21 @@ mod tests {
         assert_eq!(subject.localized_name(crate::Language::ZhCn), "RAW");
     }
 
-    /// 本地已经有原始响应时不该再联网：把缓存里的名字改成一个接口不可能返回的值，
-    /// 读出来的就是缓存的那份就说明没走网络。（走网络的分支要真的打接口，见下面的
-    /// `request_subject`。）
+    /// 本地已有缓存时不再联网。
     #[tokio::test]
     async fn cached_response_is_reused_without_requesting() {
         let dir = std::env::temp_dir().join(format!("aki-subject-cache-{}", uuid::Uuid::now_v7()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("475354.json");
 
-        let mut subject: Subject = serde_json::from_str(include_str!("subject-example.json")).unwrap();
+        let mut subject: Subject =
+            serde_json::from_str(include_str!("subject-example.json")).unwrap();
         subject.name = "CACHED NAME".to_string();
         std::fs::write(&path, serde_json::to_string_pretty(&subject).unwrap()).unwrap();
 
-        let loaded =
-            Subject::load_or_request_at(&reqwest::Client::new(), subject.id, path, false)
-                .await
-                .unwrap();
+        let loaded = Subject::load_or_request_at(&reqwest::Client::new(), subject.id, path, false)
+            .await
+            .unwrap();
         assert_eq!(loaded.name, "CACHED NAME");
 
         std::fs::remove_dir_all(&dir).unwrap();

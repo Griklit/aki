@@ -1,19 +1,14 @@
 //! 番剧索引：`root/{anime.path}/.aki/anime-index.sqlite` 下的一个 SQLite 数据库。
 //!
-//! 连接池放在 [`POOL`]（`LazyLock`）里进程内共享，各命令不再各自开关数据库。
 //! 三张表：
 //!
 //! | 表 | 列 | 用途 |
 //! |----|----|----|
-//! | `anime` | `id`(自增), `meta_id`, `title`, `air_date`, `bangumi_id` | 自增 id ↔ meta-id，`meta_id`/`bangumi_id`/`air_date` 带索引可反查 id |
+//! | `anime` | `id`(自增), `meta_id`, `air_date`, `bangumi_id` | 自增 id ↔ meta-id |
 //! | `id_title` | `id`(FK), `language`, `title` | 条目 id ↔ (language, title) |
-//! | `id_tag` | `id`(FK), `tag` | 条目 id ↔ tag，`tag` 带索引 |
+//! | `id_tag` | `id`(FK), `tag` | 条目 id ↔ tag |
 //!
-//! 一条番剧有几个标题就在 `id_title` 里占几行，有几个标签就在 `id_tag` 里占几行。
-//! 从 tag 反查 meta-id 时用 `id_tag` join `anime`（或按 id 二次查询）。
-//! 索引是随时可以从数据目录重建的缓存：数据库文件总是自动创建（`create_if_missing`），
-//! 表里还没有数据（没跑过 `build-index`）时就在 [`init_pool`] 里遍历数据目录重建一份，
-//! 而不是退回逐文件搜索。
+//! 索引是可随时从数据目录重建的缓存。
 
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -25,11 +20,7 @@ use super::super::{Anime, AnimeNamespace};
 use crate::Language;
 use crate::anime::AnimeInfo;
 
-/// 进程内共享的 SQLite 连接池。SQLite 是单写者，连接数设 1 就够。
-///
-/// `create_if_missing(true)` 保证只要目录能建出来，数据库文件就一定会被创建，因此
-/// 连接池永远可用：建目录或建表失败是真正的环境错误（磁盘只读、权限不足等），直接
-/// panic，而不是退化成「没有索引」。
+/// 进程内共享的 SQLite 连接池。
 static POOL: LazyLock<SqlitePool> = LazyLock::new(init_pool);
 
 /// [`build`] 的返回：各写了多少条。
@@ -41,9 +32,6 @@ pub struct BuildResult {
 }
 
 /// 初始化全局连接池：建目录、开库、建表，并在表为空时重建索引。
-///
-/// 连接是懒建立的（`connect_lazy_with`），但建表、建索引要先真正连一次，所以这里另起
-/// 一个 tokio runtime 同步把表结构与索引都建好，保证 [`POOL`] 首次被访问时立刻可用。
 fn init_pool() -> SqlitePool {
     let path = AnimeNamespace::sqlite_index_path();
     let parent = path
@@ -96,7 +84,7 @@ fn init_pool() -> SqlitePool {
     pool
 }
 
-/// 建表（幂等，`IF NOT EXISTS`）。SQLite 不允许多语句一次执行，逐条来。
+/// 建表（幂等）。
 async fn initialize_schema(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS anime (
@@ -145,9 +133,7 @@ pub async fn get_meta_id_of_bangumi_id(bangumi_id: i64) -> Option<String> {
     Some(meta_id)
 }
 
-/// 某个标签下的全部 `meta_id`（标签大小写不敏感、首尾空白忽略）。
-///
-/// `id_tag` 里按 `tag` 定位到条目 id，再 join `anime` 取 `meta_id`。
+/// 某个标签下的全部 `meta_id`（大小写不敏感、忽略首尾空白）。
 #[must_use]
 pub async fn get_meta_ids_of_tag(tag: &str) -> Vec<String> {
     let normalized = tag.trim().to_lowercase();
@@ -164,7 +150,7 @@ pub async fn get_meta_ids_of_tag(tag: &str) -> Vec<String> {
     rows.into_iter().map(|(meta_id,)| meta_id).collect()
 }
 
-/// 标签表里有没有东西（[`init_pool`] 据此判断是否需要在建表后重建索引）。
+/// 标签表里是否有数据。
 #[must_use]
 async fn has_tag_entries(pool: &SqlitePool) -> bool {
     let (exists,): (i64,) = sqlx::query_as("SELECT EXISTS(SELECT 1 FROM id_tag LIMIT 1)")
@@ -174,7 +160,7 @@ async fn has_tag_entries(pool: &SqlitePool) -> bool {
     exists != 0
 }
 
-/// 标题表里有没有东西（[`init_pool`] 据此判断是否需要在建表后重建索引）。
+/// 标题表里是否有数据。
 #[must_use]
 async fn has_title_entries(pool: &SqlitePool) -> bool {
     let (exists,): (i64,) = sqlx::query_as("SELECT EXISTS(SELECT 1 FROM id_title LIMIT 1)")
@@ -185,10 +171,6 @@ async fn has_title_entries(pool: &SqlitePool) -> bool {
 }
 
 /// 按标题在索引里匹配，返回命中的 `(meta.id, 标题)`。
-///
-/// 匹配在 SQL 内完成（`instr` 做子串匹配，等价于 `str::contains`，且不受 `%`/`_`
-/// 通配符干扰），只把命中的标题读回内存；打分留在 Rust 里做——打分在 SQL 与 Rust 里
-/// 算没有区别，Rust 反而更快。
 #[must_use]
 pub async fn match_meta_ids_of_title(query: &str) -> Vec<(String, String)> {
     let query = query.trim().to_lowercase();
@@ -207,7 +189,7 @@ pub async fn match_meta_ids_of_title(query: &str) -> Vec<(String, String)> {
     .unwrap_or_default()
 }
 
-/// 把一条番剧写进索引（单事务：`anime`、`id_title`、`id_tag` 要么全成要么全不成）。
+/// 把一条番剧写进索引（单事务）。
 pub async fn set_anime_index(anime: &Anime) -> Result<(), sqlx::Error> {
     insert_anime(&*POOL, anime).await.map(|_| ())
 }
@@ -219,10 +201,7 @@ pub async fn set_anime_index_or_warn(anime: &Anime) {
     }
 }
 
-/// 遍历番剧数据目录整体重建索引。
-///
-/// 先清空所有表再写入，删掉的番剧不会残留；这是 `build-index` 显式要求做的事，
-/// 不该只打印一行警告就当作成功。
+/// 遍历番剧数据目录整体重建索引（先清空所有表再写入）。
 ///
 /// # Errors
 /// 索引打不开、清空或写入失败时返回错误。
@@ -230,8 +209,7 @@ pub async fn build() -> Result<BuildResult, sqlx::Error> {
     build_with(&*POOL).await
 }
 
-/// [`build`] 的核心：在给定连接池上清空并重建索引。提取出来是因为 [`init_pool`]
-/// 在 [`POOL`] 尚未初始化完成时也要跑一次重建。
+/// 在给定连接池上清空并重建索引。
 async fn build_with(pool: &SqlitePool) -> Result<BuildResult, sqlx::Error> {
     sqlx::query("DELETE FROM id_tag").execute(pool).await?;
     sqlx::query("DELETE FROM id_title").execute(pool).await?;
@@ -281,10 +259,6 @@ async fn insert_anime(
 }
 
 /// 插入/更新 `anime` 行，返回其自增 id。
-///
-/// 更新条目时 `meta.id` 可能被重算（`update-with-bangumi`），而 `bangumi_id` 是唯一的：
-/// 先把指向同一 `bangumi_id` 的旧行删掉（其 `id_title/id_tag` 由外键级联清掉），再按
-/// `meta_id` upsert，避免两个 `meta_id` 抢同一个 UNIQUE `bangumi_id`。
 async fn upsert_meta(
     tx: &mut Transaction<'_, Sqlite>,
     meta_id: &str,
@@ -366,9 +340,7 @@ async fn rebuild_tags(
     Ok(count)
 }
 
-/// 这条番剧的全部 `(language, title)` 对，按标题去重（与 [`Anime::all_titles`] 一致）。
-///
-/// 原标题的语言按内容检测；各语言译名用它自己的 [`Language`]。空标题跳过。
+/// 这条番剧的全部 `(language, title)` 对，按标题去重，空标题跳过。
 fn title_pairs(anime: &Anime) -> Vec<(String, String)> {
     let mut seen = HashSet::new();
     let mut pairs = Vec::new();

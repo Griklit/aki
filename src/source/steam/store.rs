@@ -20,8 +20,6 @@ impl<T> SteamRawStore<T> {
 
     /// 写到 [`SteamNamespace::saved_path`] 给出的 `{name}.json`。
     ///
-    /// 写入的是 [`Self::raw`] 本身——响应原文，一个字节都不改。
-    ///
     /// # Errors
     /// 目录建不出来或写盘失败时返回错误。
     pub fn save_named(&self, name: &str) -> Result<std::path::PathBuf, std::io::Error> {

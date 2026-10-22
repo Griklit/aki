@@ -3,14 +3,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::super::{Anime, MetaId, index};
 
-/// 按标题匹配字符串（可用标签筛选），返回分数最高的前 `limit` 条。
+/// 按标题匹配（可用标签筛选），返回分数最高的前 `limit` 条。
 ///
-/// 标题走 `.aki/anime-index.sqlite` 的 `titles` 表：把整张表扫一遍做字符串匹配，
-/// 只对最终要返回的那几条去读数据文件。`tags` 非空时再用 `tags`/`anime_tags` 里的
-/// 标签集合过滤，多个标签之间是「且」。
-///
-/// `query` 为空、只给 `tags` 时，就是「按标签列番剧」：按 `meta.id` 顺序（也就是
-/// `[日期] 名字` 的日期顺序）返回，不走标题打分。
+/// `query` 为空、只给 `tags` 时，按标签列番剧，结果按 `meta.id` 顺序返回。
 #[must_use]
 pub async fn search(query: &str, tags: &[String], limit: usize, verify_index: bool) -> Vec<Anime> {
     let query = query.trim();
@@ -25,7 +20,7 @@ pub async fn search(query: &str, tags: &[String], limit: usize, verify_index: bo
     }
 }
 
-/// 去掉空白、统一小写：标签在索引里就是按这个形式存的。
+/// 标签规范化：去空白、统一小写、去重、排序。
 fn normalize_tags(tags: &[String]) -> Vec<String> {
     let mut normalized: Vec<String> = tags
         .iter()
@@ -37,9 +32,7 @@ fn normalize_tags(tags: &[String]) -> Vec<String> {
     normalized
 }
 
-/// 标题搜索：先拿到「`meta.id` → 分数」，再按标签过滤，最后排序截断。
-///
-/// 过滤放在截断**之前**，所以 `--tag` 不会让结果少于一页应有的条数。
+/// 标题搜索：先拿「`meta.id` → 分数」，再按标签过滤，最后排序截断。
 async fn search_by_title(
     query: &str,
     tags: &[String],
@@ -68,9 +61,7 @@ async fn filter_by_tags(best: BTreeMap<String, f32>, tags: &[String]) -> BTreeMa
         .filter(|(meta_id, _)| hits.contains(meta_id))
         .collect()
 }
-/// 按标签找番剧（多个标签之间是「且」）。
-///
-/// 结果按 `meta.id` 排序（`[YYYY-MM-DD] 名字` 正好是日期顺序）。
+/// 按标签找番剧（多个标签之间是「且」），结果按 `meta.id` 排序。
 async fn search_by_tags(tags: &[String], limit: usize, verify_index: bool) -> Vec<Anime> {
     let hits = lookup_tags(tags).await;
     if !hits.is_empty() {
@@ -87,7 +78,7 @@ async fn search_by_tags(tags: &[String], limit: usize, verify_index: bool) -> Ve
     load_meta_ids(lookup_tags(tags).await, limit)
 }
 
-/// 在索引的标题表上按标题匹配（匹配在 SQL 内完成，打分在 Rust 里做）。
+/// 在索引的标题表上按标题匹配。
 async fn lookup_index(query: &str) -> BTreeMap<String, f32> {
     // 同一个 `meta.id` 有多个标题时取最高分。
     let mut best: BTreeMap<String, f32> = BTreeMap::new();
@@ -147,8 +138,7 @@ fn load_anime(meta_id: &str) -> Option<Anime> {
 
 /// 单个标题的匹配分数：完全相同 > 前缀 > 包含，同一档里标题越短越靠前。
 ///
-/// 返回 `None` 表示不匹配（空 `query` 一律视为不匹配）。`title` 与 `query`
-/// 都按小写比较。
+/// 返回 `None` 表示不匹配。比较时不区分大小写。
 #[must_use]
 pub fn score_title(title: &str, query: &str) -> Option<f32> {
     let query = query.trim().to_lowercase();

@@ -51,8 +51,6 @@ impl TryFrom<&str> for GamePlayStatus {
 }
 
 /// 成就进度：已解锁 / 总数，如 `23/45`。
-///
-/// 成就有官方总数，所以不用百分比表示——两个数字都存着，展示和统计都方便。
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
 pub struct GameAchievements {
     /// 已解锁数量。
@@ -67,7 +65,7 @@ impl GameAchievements {
         Self { unlocked, total }
     }
 
-    /// 完成比例，`total` 为 0 时返回 `None`（不是 0，避免和「一个都没解锁」混淆）。
+    /// 完成比例，`total` 为 0 时返回 `None`。
     #[must_use]
     pub fn ratio(&self) -> Option<f32> {
         if self.total == 0 {
@@ -79,13 +77,13 @@ impl GameAchievements {
     }
 }
 
-/// 成就计数转 `f32` 只为算展示用的比例，精度损失无所谓。
+/// `u32` 转 `f32`，仅用于展示。
 #[allow(clippy::cast_precision_loss)]
 fn u32_to_f32(value: u32) -> f32 {
     value as f32
 }
 
-/// 秒转小时只为展示，精度损失无所谓。
+/// `u64` 转 `f64`，仅用于展示。
 #[allow(clippy::cast_precision_loss)]
 fn u64_to_f64(value: u64) -> f64 {
     value as f64
@@ -106,8 +104,7 @@ pub struct GameState {
     played_seconds: Option<u64>,
     /// 成就进度，如 `23/45`。
     achievements: Option<GameAchievements>,
-    /// 最后一次游玩的时间戳（Unix 秒）。Steam 提供，手填的
-    /// `play_start_date` / `play_finish_date` 不受影响。
+    /// 最后一次游玩的时间戳（Unix 秒）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     last_played_at: Option<i64>,
     comment: Option<String>,
@@ -240,8 +237,7 @@ pub fn unix_seconds_to_date(seconds: i64) -> Option<NaiveDate> {
 
 /// 往 `state` 里补 Steam 给的值，**只在字段为空时填**，手填的值一律保留。
 ///
-/// 入参是 Steam 的原始单位：时长用分钟、最后游玩用 Unix 秒。
-/// 返回被填上的字段名，供命令打印。
+/// 返回被填上的字段名。
 pub fn fill_from_steam(
     state: &mut GameState,
     played_minutes: i64,
@@ -282,7 +278,7 @@ mod tests {
         }
     }
 
-    /// 导出/写库用 `as_str()`，数据文件用 serde，两者必须一致。
+    /// `as_str()` 与 serde 序列化结果必须一致。
     #[test]
     fn as_str_agrees_with_serde() {
         for status in ALL {

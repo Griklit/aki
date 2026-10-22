@@ -4,10 +4,10 @@ use super::super::Subject;
 use crate::CONFIG;
 use crate::utils::text::truncate;
 
-/// 搜索接口一次最多返回多少条：请求更大的 `limit`（试过 50）也只回 20 条，是接口侧截断。
+/// 搜索接口一次最多返回的条数。
 pub const MAX_LIMIT: u32 = 20;
 
-/// 调用方没指定 `limit` 时给多少条（`aki-cli` 的 `--limit` 默认值也是它）。
+/// 调用方没指定 `limit` 时的默认条数。
 pub const DEFAULT_LIMIT: u32 = 10;
 
 /// 错误响应里附带的响应片段长度上限。
@@ -36,8 +36,6 @@ pub enum SearchSubjectError {
 }
 
 /// `POST /v0/search/subjects` 的请求体。
-///
-/// 分页参数（`limit` / `offset`）走 query string，不放进请求体，因此标了 `skip`。
 #[derive(Debug, Clone, Serialize)]
 pub struct SearchSubjects {
     /// 检索关键词，必填。
@@ -55,7 +53,7 @@ pub struct SearchSubjects {
 }
 
 impl SearchSubjects {
-    /// 只给关键词，其余用默认值（[`DEFAULT_LIMIT`] 条、从第 0 条开始、不筛选）。
+    /// 只给关键词，其余用默认值。
     #[must_use]
     pub fn new(keyword: impl Into<String>) -> Self {
         Self {
@@ -81,12 +79,12 @@ impl Default for SearchSubjects {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SearchSort {
-    /// 按匹配程度（meilisearch 默认排序）。
+    /// 按匹配程度（默认）。
     #[default]
     Match,
     /// 按收藏人数。
     Heat,
-    /// 按排名由高到低。
+    /// 按排名。
     Rank,
     /// 按评分。
     Score,
@@ -105,10 +103,7 @@ impl SearchSort {
     }
 }
 
-/// 搜索筛选条件。**不同字段之间是「且」**，同一字段的多个值是「或」（`type`）
-/// 或「且」（其余），详见接口文档。
-///
-/// 所有字段都可省略，省略的字段不会出现在请求体里（不是发 `null`）。
+/// 搜索筛选条件。不同字段之间是「且」，所有字段都可省略。
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SearchSubjectsFilter {
     /// 条目类型，多值之间为「或」。
@@ -142,16 +137,14 @@ pub struct SearchSubjectsFilter {
 pub struct SubjectSearchResult {
     /// 命中的总条数，不受 `limit` 影响。
     pub total: i64,
-    /// 本次实际返回的条数上限（接口会把过大的 `limit` 截到 [`MAX_LIMIT`]）。
+    /// 本次实际返回的条数上限。
     pub limit: i64,
     pub offset: i64,
-    /// 命中的条目，字段与 `/v0/subjects/{id}` 的返回一致。
+    /// 命中的条目。
     pub data: Vec<Subject>,
 }
 
 /// 按关键词搜索条目。
-///
-/// 只做请求与解析，不落盘、也不打印——调用方（CLI）决定怎么展示。
 ///
 /// # Errors
 /// 网络失败、非 2xx 状态码、响应不是合法的 `Paged[Subject]` 时返回错误。
@@ -188,7 +181,7 @@ pub async fn search_subjects(
 mod tests {
     use super::*;
 
-    /// 省略的字段不能出现在请求体里：接口把 `null` 和「没给」当成两种意思。
+    /// 省略的字段不出现在请求体里。
     #[test]
     fn omitted_filter_fields_are_not_serialized() {
         let request = SearchSubjects::new("物语");
@@ -230,7 +223,7 @@ mod tests {
         assert!(body["filter"].get("rank").is_none());
     }
 
-    /// 真实的搜索响应（完整 `Subject` + 事件性的 `image` 字段）必须能解析。
+    /// 真实的搜索响应必须能解析。
     #[test]
     fn parses_a_search_response() {
         let json = r#"{
@@ -281,7 +274,7 @@ mod tests {
         assert!(result.data.is_empty());
     }
 
-    /// `as_str()` 必须和 serde 序列化结果一致，否则请求体会和文档对不上。
+    /// `as_str()` 与 serde 序列化结果一致。
     #[test]
     fn sort_as_str_agrees_with_serde() {
         for sort in [

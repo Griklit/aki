@@ -1,18 +1,12 @@
 use std::path::{Component, Path, PathBuf};
 
-/// 把一段名字变成安全的文件名。
-///
-/// 会去掉路径分隔符、`:`、`*`、`?` 等在各平台上不该出现在文件名里的字符，
-/// 所以 `[2010-10-04] 侵略!イカ娘` 这类带特殊字符的 `meta.id` 也能直接当文件名。
+/// 把一段名字变成安全的文件名（去掉路径分隔符等非法字符）。
 #[must_use]
 pub fn sanitize_name(name: &str) -> String {
     sanitize_filename::sanitize(name)
 }
 
-/// 把一个只能是单段名字的字符串变成一段安全的相对路径。
-///
-/// `/`、`\` 之类的分隔符会被 [`sanitize_name`] 去掉，因此结果**永远不会**
-/// 跨越子目录——需要子目录时请由调用方自己 [`PathBuf::join`]。
+/// 把一段名字变成安全的相对路径段（不会跨越子目录）。
 #[must_use]
 pub fn sanitized_segment(name: &str) -> PathBuf {
     PathBuf::from(sanitize_name(name))
@@ -54,8 +48,7 @@ pub fn normalize(path: impl AsRef<Path>) -> PathBuf {
 mod tests {
     use super::*;
 
-    /// [`normalize`] 返回的是平台原生路径（Windows 上是 `\` 分隔），而这里的断言
-    /// 写的是 POSIX 形式，所以先把分隔符统一再比。
+    /// 把路径统一成 POSIX 形式再比较。
     fn norm(input: &str) -> String {
         normalize(input)
             .to_string_lossy()

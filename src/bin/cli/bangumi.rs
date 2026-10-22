@@ -4,7 +4,7 @@ use aki::{CONFIG, Language};
 use clap::{Args, Parser, Subcommand};
 use std::str::FromStr;
 
-/// `--type` 的取值：条目类型，映射到接口用的数字（`5` 不存在）。
+/// `--type` 的取值：条目类型。
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
 enum SubjectTypeArg {
     /// 书籍
@@ -59,9 +59,7 @@ impl SortArg {
 pub struct SearchSubject {
     /// 检索关键词
     keyword: Option<String>,
-    /// 返回条数上限
-    ///
-    ///（接口最多返回 20 条，给更大的值也只拿到 20 条）
+    /// 返回条数上限（接口最多返回 20 条）。
     #[arg(short, long, default_value_t = bangumi_command::DEFAULT_LIMIT)]
     limit: u32,
     /// 跳过前多少条
@@ -85,13 +83,9 @@ pub struct SearchSubject {
     /// 只看某一季的新番：`current`（本季，默认）/ `last` / `next` / `2026-10` / `2026-Q4`。
     ///
     /// 给了它就默认只搜动画（-t anime）并按排名排序（-s rank），显式给的 -t / -s 优先。
-    /// 按排名排序会排除未上榜（rank 0）的条目，刚开播或还没播的季度大多还没上榜，
-    /// 这时改用 -s heat 或 -s score
     #[arg(long, num_args = 0..=1, default_missing_value = "current", value_name = "SEASON")]
     season: Option<String>,
-    /// 只要 R18 条目
-    ///
-    /// （没权限的账号会被接口忽略这个选项）
+    /// 只要 R18 条目。
     #[arg(long)]
     nsfw: bool,
 }
@@ -162,9 +156,6 @@ impl BangumiSubCommands {
 }
 
 /// 把搜索结果整理成人看的几行。
-///
-/// 每行形如 `   1988 - [2006-11-01][book ] 物语系列（〈物語〉シリーズ） - #117 8.5`：
-/// `{bangumi-id:>7} - [{date:^10}][{type:^5}] {译名}（{原名}） - #{rank} {score}`。
 fn format_search(result: &bangumi_command::SubjectSearchResult) -> String {
     let mut lines = vec![format!(
         "total {} (limit {}, offset {})",
@@ -199,10 +190,7 @@ fn format_search(result: &bangumi_command::SubjectSearchResult) -> String {
     lines.join("\n")
 }
 
-/// 系统 locale（[`CONFIG`] 的 `locale`）对应的语言，认不出来时返回 `None`（只用原名）。
-///
-/// [`Language::from_str`] 只认 `zh-CN` 这类完整形式，而系统给的多半是 `zh-Hans-CN`
-/// 之类，所以认不出来时再按第一个片段兜一次底。
+/// 系统 locale 对应的语言，认不出来时返回 `None`。
 fn locale_language() -> Option<Language> {
     let locale = &CONFIG.locale;
     Language::from_str(locale).ok().or_else(|| {

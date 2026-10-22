@@ -153,8 +153,7 @@ mod tests {
         }
     }
 
-    /// `export-state` 用 `as_str()` 写库，数据文件用 serde。两者必须一致，
-    /// 否则同一个状态在 JSON 和数据库里会显示成不同的值。
+    /// `as_str()` 与 serde 序列化结果必须一致。
     #[test]
     fn as_str_agrees_with_serde() {
         for status in ALL {

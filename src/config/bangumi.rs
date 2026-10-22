@@ -10,9 +10,6 @@ fn default_bangumi_path() -> PathBuf {
 }
 
 /// `[bangumi]`：Bangumi 接口地址与原始数据的落盘位置。
-///
-/// 与 [`super::ConfigAnime`] / [`super::ConfigGame`] 平级——Bangumi 是数据来源，
-/// 不是某个领域的子模块，所以 `bangumi_api` 也挂在这里而不是 `[anime]` 下。
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ConfigBangumi {
     /// 相对于 [`super::Config::root`] 的目录，`Subject` 原始响应落在它的 `subject/` 下。

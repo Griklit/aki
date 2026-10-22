@@ -6,9 +6,6 @@ use serde::Deserialize;
 use std::collections::BTreeMap;
 
 /// 老式外壳 `{"<appid>": {"success": bool, "data": {...}}}`。
-///
-/// `data` 用 `serde_json::Value` 收下，确认外层真的是这个形状之后才按
-/// [`AppDetails`] 解析。
 #[derive(Debug, Deserialize)]
 struct AppDetailsEnvelope {
     success: bool,
@@ -82,8 +79,7 @@ impl Endpoint for AppDetailsEndpoint {
         Ok(extract_checked(body, self.appid)?.0)
     }
 
-    /// 落盘的就是**响应原文**：外壳、字段顺序、缩进都保持原样，
-    /// 一个字节都不改（以后补字段可以离线重跑解析）。
+    /// 落盘的是响应原文，一个字节都不改。
     fn raw_body(&self, body: &str) -> Result<Option<String>, SteamRequestError> {
         let (_, raw) = extract_checked(body, self.appid)?;
         Ok(Some(raw))
@@ -92,9 +88,7 @@ impl Endpoint for AppDetailsEndpoint {
 
 /// 取出 appdetails 的条目数据，并校验 appid。
 ///
-/// 返回 `(解析后的条目, 要落盘的文本)`。落盘文本就是**响应原文**——一个字节都
-/// 不改，外壳、字段顺序、缩进都留着；离线重跑解析时走同一个
-/// [`extract_app_details`]，两种形状都认。
+/// 返回 `(解析后的条目, 要落盘的文本)`。
 fn extract_checked(body: &str, appid: u32) -> Result<(AppDetails, String), SteamRequestError> {
     let data = extract_app_details(body, appid)?;
     let app: AppDetails =
@@ -114,12 +108,10 @@ fn extract_checked(body: &str, appid: u32) -> Result<(AppDetails, String), Steam
 
 /// 从响应里取出条目数据（[`serde_json::Value`]）。
 ///
-/// 兼容两种形状：
-/// - 裸对象 `{"steam_appid":427520,"name":"Factorio",...}`（Steam 多数情况这么回）
-/// - 老式外壳 `{"427520":{"success":true,"data":{...}}}`（字段更全，价格/配置都在）
+/// 兼容裸对象与老式外壳两种形状。
 ///
 /// # Errors
-/// 两种形状都不是合法 JSON，或请求的 appid 不存在（下架/锁区）时返回错误。
+/// JSON 非法，或请求的 appid 不存在时返回错误。
 fn extract_app_details(body: &str, appid: u32) -> Result<serde_json::Value, SteamRequestError> {
     // 先判断是不是老式外壳：外壳的标志是顶层有数字 appid 作为键。
     let is_envelope =
@@ -214,8 +206,7 @@ impl Endpoint for OwnedGamesEndpoint {
         Ok(envelope.response.games)
     }
 
-    /// 落盘响应原文（整个 `{"response":{"game_count":…,"games":[…]}}`），
-    /// 以后要补字段（比如 `playtime_deck_forever`）可以直接离线重跑。
+    /// 落盘响应原文。
     fn raw_body(&self, body: &str) -> Result<Option<String>, SteamRequestError> {
         self.parse(body)?;
         Ok(Some(body.to_string()))

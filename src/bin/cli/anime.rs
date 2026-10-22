@@ -36,14 +36,14 @@ pub struct Search {
     /// 返回结果数量上限。
     #[arg(short, long, default_value = "16")]
     limit: usize,
-    /// 索引没匹配到时再扫一遍数据文件确认（索引可能落后于数据目录，会慢一些）。
+    /// 索引没匹配到时再扫一遍数据文件确认。
     #[arg(long)]
     verify_index: bool,
 }
 
 #[derive(Args)]
 pub struct ExportState {
-    /// 输出的 SQLite 文件（必填，anime_state 表每次重建）。
+    /// 输出的 SQLite 文件（必填）。
     #[arg(short, long)]
     output: PathBuf,
 }
@@ -62,11 +62,11 @@ pub struct ImportState {
 pub enum AnimeSubCommands {
     /// 按 Bangumi 条目 ID 添加动画。
     AddWithBangumi(AddWithBangumi),
-    /// 按 Bangumi 条目 ID 刷新动画数据（默认用本地缓存的原始响应，--refresh 才重新拉取；不改动 state）。
+    /// 按 Bangumi 条目 ID 刷新动画数据（--refresh 重新拉取，不改动 state）。
     UpdateWithBangumi(UpdateWithBangumi),
-    /// 重建动画索引（SQLite：meta-id、title 与 tag 三张表）。
+    /// 重建动画索引。
     BuildIndex(BuildIndex),
-    /// 按标题检索动画：走 title 索引，索引未建时退回扫数据文件；--tag 可按标签筛选（多个标签是「且」，可只给标签）。
+    /// 按标题检索动画，可用 --tag 按标签筛选。
     Search(Search),
     /// 把所有动画的 state 导出到 SQLite 文件。
     ExportState(ExportState),

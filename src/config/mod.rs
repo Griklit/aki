@@ -1,17 +1,13 @@
 //! 配置模块：`aki.toml` 的模型与加载。
 //!
-//! 一个领域/来源一段配置，各占一个文件，**全部平级**：
+//! 一个领域/来源一段配置，各占一个文件：
 //!
 //! | 文件 | 配置段 | 内容 |
 //! |------|--------|------|
-//! | [`anime`] | `[anime]` | 番剧数据目录、Bangumi 接口地址 |
+//! | [`anime`] | `[anime]` | 番剧数据目录 |
 //! | [`game`] | `[game]` | 游戏数据目录 |
 //! | [`bangumi`] | `[bangumi]` | Bangumi 原始响应的落盘位置 |
 //! | [`steam`] | `[steam]` | Steam 接口配置与原始响应的落盘位置 |
-//!
-//! 这里只做两件事：把 `aki.toml` 读成 [`Config`]、给出全局单例 [`CONFIG`]。
-//! **路径解析不在这一层**——各 `Namespace` 用 [`Config::root`] 拼自己那段
-//! （见 [`crate::Namespace`]）。
 
 mod anime;
 mod bangumi;
@@ -69,10 +65,10 @@ pub struct Config {
     pub locale: String,
     pub anime: ConfigAnime,
     pub game: ConfigGame,
-    /// 数据来源：Bangumi 原始响应（整段省略时用默认值）。
+    /// Bangumi 配置。
     #[serde(default)]
     pub bangumi: ConfigBangumi,
-    /// 数据来源：Steam 接口与原始响应（整段省略时用默认值）。
+    /// Steam 配置。
     #[serde(default)]
     pub steam: ConfigSteam,
 }

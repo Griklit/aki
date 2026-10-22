@@ -22,9 +22,6 @@ fn default_steam_store_api() -> String {
 }
 
 /// `[steam]`：Steam 接口配置与原始数据的落盘位置。
-///
-/// 与 [`super::ConfigAnime`] / [`super::ConfigGame`] 平级——Steam 是数据来源，
-/// 不是 `game` 的子模块。
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ConfigSteam {
     /// 相对于 [`super::Config::root`] 的目录，原始响应就落在它下面。
