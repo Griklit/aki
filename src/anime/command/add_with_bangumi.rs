@@ -26,10 +26,7 @@ pub async fn add_with_bangumi(
     anime
         .save_as_meta_id()
         .map_err(AddWithBangumiError::SaveAnime)?;
-    // 记入索引，让 update-with-bangumi 与 search 立刻能用。索引打不开时只打印
-    // 警告：它可以从数据目录重建，不该让添加本身失败。
-    if index::is_available() {
-        index::set_anime_index_or_warn(&anime).await;
-    }
+    // 记入索引，让 update-with-bangumi 与 search 立刻能用；索引重建失败只打印警告。
+    index::set_anime_index_or_warn(&anime).await;
     Ok(anime)
 }

@@ -11,8 +11,9 @@
 //!
 //! 一条番剧有几个标题就在 `id_title` 里占几行，有几个标签就在 `id_tag` 里占几行。
 //! 从 tag 反查 meta-id 时用 `id_tag` join `anime`（或按 id 二次查询）。
-//! 索引是随时可以从数据目录重建的缓存：打不开就退化成「没有索引」，调用方回退到
-//! 遍历数据文件。
+//! 索引是随时可以从数据目录重建的缓存：数据库文件总是自动创建（`create_if_missing`），
+//! 表里还没有数据（没跑过 `build-index`）时就在 [`init_pool`] 里遍历数据目录重建一份，
+//! 而不是退回逐文件搜索。
 
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -24,9 +25,12 @@ use super::super::{Anime, AnimeNamespace};
 use crate::Language;
 use crate::anime::AnimeInfo;
 
-/// 进程内共享的 SQLite 连接池。SQLite 是单写者，连接数设 1 就够；打不开（目录建不出、
-/// 数据库打不开）时置 `None`，所有查询退化成「没有索引」。
-static POOL: LazyLock<Option<SqlitePool>> = LazyLock::new(init_pool);
+/// 进程内共享的 SQLite 连接池。SQLite 是单写者，连接数设 1 就够。
+///
+/// `create_if_missing(true)` 保证只要目录能建出来，数据库文件就一定会被创建，因此
+/// 连接池永远可用：建目录或建表失败是真正的环境错误（磁盘只读、权限不足等），直接
+/// panic，而不是退化成「没有索引」。
+static POOL: LazyLock<SqlitePool> = LazyLock::new(init_pool);
 
 /// [`build`] 的返回：各写了多少条。
 pub struct BuildResult {
@@ -36,21 +40,21 @@ pub struct BuildResult {
     pub errors: Vec<sqlx::Error>,
 }
 
-/// 初始化全局连接池：建目录、开库、建表。
+/// 初始化全局连接池：建目录、开库、建表，并在表为空时重建索引。
 ///
-/// 连接是懒建立的（`connect_lazy_with`），但建表要先真正连一次，所以这里另起一个
-/// tokio runtime 同步把表结构建好，保证 [`POOL`] 首次被访问时立刻可用。
-fn init_pool() -> Option<SqlitePool> {
+/// 连接是懒建立的（`connect_lazy_with`），但建表、建索引要先真正连一次，所以这里另起
+/// 一个 tokio runtime 同步把表结构与索引都建好，保证 [`POOL`] 首次被访问时立刻可用。
+fn init_pool() -> SqlitePool {
     let path = AnimeNamespace::sqlite_index_path();
-    if let Some(parent) = path.parent()
-        && let Err(error) = std::fs::create_dir_all(parent)
-    {
-        eprintln!(
-            "[?] failed to create anime index directory '{}': {error}",
+    let parent = path
+        .parent()
+        .expect("anime index path must have a parent directory");
+    std::fs::create_dir_all(parent).unwrap_or_else(|error| {
+        panic!(
+            "failed to create anime index directory '{}': {error}",
             parent.display()
-        );
-        return None;
-    }
+        )
+    });
     let options = SqliteConnectOptions::new()
         .filename(&path)
         .create_if_missing(true)
@@ -60,34 +64,36 @@ fn init_pool() -> Option<SqlitePool> {
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
         .connect_lazy_with(options);
-    // 建表要真正连一次库，得在异步上下文里做；但 `init_pool` 可能已在某个 runtime 的
-    // 线程上被调用（各命令用 `block_on` 包了一层），再 `Runtime::new().block_on()` 会
-    // panic（不能嵌套 runtime）。于是另起一个线程建表，同步 `join` 等它完成。
-    let schema_pool = pool.clone();
-    let schema = std::thread::spawn(move || -> Result<(), sqlx::Error> {
+    // 建表、建索引要真正连一次库，得在异步上下文里做；但 `init_pool` 可能已在某个
+    // runtime 的线程上被调用（各命令用 `block_on` 包了一层），再 `Runtime::new().block_on()`
+    // 会 panic（不能嵌套 runtime）。于是另起一个线程，同步 `join` 等它完成。
+    let init_pool = pool.clone();
+    let initialized = std::thread::spawn(move || -> Result<(), sqlx::Error> {
         let runtime = tokio::runtime::Runtime::new()
             .map_err(|error| sqlx::Error::Configuration(error.into()))?;
-        runtime.block_on(initialize_schema(&schema_pool))
+        runtime.block_on(async {
+            initialize_schema(&init_pool).await?;
+            // 表里还没有数据（没跑过 `build-index`）时，在初始化阶段就把索引建好，
+            // 之后各命令不再需要 `ensure_index`。
+            if !(has_title_entries(&init_pool).await && has_tag_entries(&init_pool).await) {
+                build_with(&init_pool).await?;
+            }
+            Ok(())
+        })
     })
     .join();
-    match schema {
+    match initialized {
         Ok(Ok(())) => {}
-        Ok(Err(error)) => {
-            eprintln!(
-                "[?] failed to initialize anime index '{}': {error}",
-                path.display()
-            );
-            return None;
-        }
-        Err(_) => {
-            eprintln!(
-                "[?] failed to initialize anime index '{}': schema thread panicked",
-                path.display()
-            );
-            return None;
-        }
+        Ok(Err(error)) => panic!(
+            "failed to initialize anime index '{}': {error}",
+            path.display()
+        ),
+        Err(_) => panic!(
+            "failed to initialize anime index '{}': init thread panicked",
+            path.display()
+        ),
     }
-    Some(pool)
+    pool
 }
 
 /// 建表（幂等，`IF NOT EXISTS`）。SQLite 不允许多语句一次执行，逐条来。
@@ -128,22 +134,12 @@ async fn initialize_schema(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
-/// 索引是否可用（全局连接池 [`POOL`] 是否已成功初始化）。
-///
-/// 索引是可重建的缓存，不该因为它打不开就让真正的增删改失败；初始化失败的警告
-/// 已在 [`init_pool`] 里打印过，这里只返回 `false`。
-#[must_use]
-pub fn is_available() -> bool {
-    POOL.as_ref().is_some()
-}
-
 /// 按 `bangumi_id` 查 `meta_id`。
 #[must_use]
 pub async fn get_meta_id_of_bangumi_id(bangumi_id: i64) -> Option<String> {
-    let pool = POOL.as_ref()?;
     let (meta_id,): (String,) = sqlx::query_as("SELECT meta_id FROM anime WHERE bangumi_id = ?")
         .bind(bangumi_id)
-        .fetch_optional(pool)
+        .fetch_optional(&*POOL)
         .await
         .ok()??;
     Some(meta_id)
@@ -154,9 +150,6 @@ pub async fn get_meta_id_of_bangumi_id(bangumi_id: i64) -> Option<String> {
 /// `id_tag` 里按 `tag` 定位到条目 id，再 join `anime` 取 `meta_id`。
 #[must_use]
 pub async fn get_meta_ids_of_tag(tag: &str) -> Vec<String> {
-    let Some(pool) = POOL.as_ref() else {
-        return Vec::new();
-    };
     let normalized = tag.trim().to_lowercase();
     let rows: Vec<(String,)> = sqlx::query_as(
         "SELECT a.meta_id
@@ -165,19 +158,15 @@ pub async fn get_meta_ids_of_tag(tag: &str) -> Vec<String> {
          WHERE t.tag = ?",
     )
     .bind(normalized)
-    .fetch_all(pool)
+    .fetch_all(&*POOL)
     .await
     .unwrap_or_default();
     rows.into_iter().map(|(meta_id,)| meta_id).collect()
 }
 
-/// 标签表里有没有东西（用来区分「索引里真的没有这个标签」和「这份索引是加标签
-/// 之前建的」）。
+/// 标签表里有没有东西（[`init_pool`] 据此判断是否需要在建表后重建索引）。
 #[must_use]
-pub async fn has_tag_entries() -> bool {
-    let Some(pool) = POOL.as_ref() else {
-        return false;
-    };
+async fn has_tag_entries(pool: &SqlitePool) -> bool {
     let (exists,): (i64,) = sqlx::query_as("SELECT EXISTS(SELECT 1 FROM id_tag LIMIT 1)")
         .fetch_one(pool)
         .await
@@ -185,12 +174,9 @@ pub async fn has_tag_entries() -> bool {
     exists != 0
 }
 
-/// 标题表里有没有东西（用来区分「索引里真的没有标题」和「这份索引是建标题之前建的」）。
+/// 标题表里有没有东西（[`init_pool`] 据此判断是否需要在建表后重建索引）。
 #[must_use]
-pub async fn has_title_entries() -> bool {
-    let Some(pool) = POOL.as_ref() else {
-        return false;
-    };
+async fn has_title_entries(pool: &SqlitePool) -> bool {
     let (exists,): (i64,) = sqlx::query_as("SELECT EXISTS(SELECT 1 FROM id_title LIMIT 1)")
         .fetch_one(pool)
         .await
@@ -205,9 +191,6 @@ pub async fn has_title_entries() -> bool {
 /// 算没有区别，Rust 反而更快。
 #[must_use]
 pub async fn match_meta_ids_of_title(query: &str) -> Vec<(String, String)> {
-    let Some(pool) = POOL.as_ref() else {
-        return Vec::new();
-    };
     let query = query.trim().to_lowercase();
     if query.is_empty() {
         return Vec::new();
@@ -219,15 +202,14 @@ pub async fn match_meta_ids_of_title(query: &str) -> Vec<(String, String)> {
          WHERE instr(lower(t.title), ?) > 0",
     )
     .bind(&query)
-    .fetch_all(pool)
+    .fetch_all(&*POOL)
     .await
     .unwrap_or_default()
 }
 
 /// 把一条番剧写进索引（单事务：`anime`、`id_title`、`id_tag` 要么全成要么全不成）。
 pub async fn set_anime_index(anime: &Anime) -> Result<(), sqlx::Error> {
-    let pool = POOL.as_ref().ok_or(sqlx::Error::PoolClosed)?;
-    insert_anime(pool, anime).await.map(|_| ())
+    insert_anime(&*POOL, anime).await.map(|_| ())
 }
 
 /// [`set_anime_index`] 的容错版，失败只打印警告。
@@ -245,7 +227,12 @@ pub async fn set_anime_index_or_warn(anime: &Anime) {
 /// # Errors
 /// 索引打不开、清空或写入失败时返回错误。
 pub async fn build() -> Result<BuildResult, sqlx::Error> {
-    let pool = POOL.as_ref().ok_or(sqlx::Error::PoolClosed)?;
+    build_with(&*POOL).await
+}
+
+/// [`build`] 的核心：在给定连接池上清空并重建索引。提取出来是因为 [`init_pool`]
+/// 在 [`POOL`] 尚未初始化完成时也要跑一次重建。
+async fn build_with(pool: &SqlitePool) -> Result<BuildResult, sqlx::Error> {
     sqlx::query("DELETE FROM id_tag").execute(pool).await?;
     sqlx::query("DELETE FROM id_title").execute(pool).await?;
     sqlx::query("DELETE FROM anime").execute(pool).await?;

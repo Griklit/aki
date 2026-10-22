@@ -33,10 +33,8 @@ pub async fn update_with_bangumi(
     bangumi_id: i64,
     refresh: bool,
 ) -> Result<Anime, UpdateWithBangumiError> {
-    // 索引只是加速定位的缓存，打不开就退化成遍历数据目录。
-    let index_available = index::is_available();
     // 先确认要更新的条目存在且唯一，避免为一次注定失败的调用写入 Bangumi 数据。
-    let (mut anime, outdated_path) = find_exclusive_anime(index_available, bangumi_id).await?;
+    let (mut anime, outdated_path) = find_exclusive_anime(bangumi_id).await?;
 
     let subject = Subject::load_or_request_with_id(client, bangumi_id, refresh)
         .await
@@ -55,9 +53,7 @@ pub async fn update_with_bangumi(
         .save_as_meta_id_force()
         .map_err(UpdateWithBangumiError::SaveAnime)?;
     // `meta.id` 可能已按最新数据重算：先把索引指向新文件，再删除旧文件。
-    if index_available {
-        index::set_anime_index_or_warn(&anime).await;
-    }
+    index::set_anime_index_or_warn(&anime).await;
     if path != outdated_path {
         std::fs::remove_file(&outdated_path).map_err(UpdateWithBangumiError::RemoveOutdatedFile)?;
     }
@@ -76,17 +72,13 @@ fn is_same_entry(path: &Path, anime: &Anime) -> bool {
 
 /// 找出 `bangumi_id` 唯一对应的番剧，并返回它当前的数据文件路径。
 ///
-/// 先查索引；索引不可用、未命中或已失效（文件被改名、删除）时回退到遍历数据
-/// 目录，并把找到的映射写回索引。
+/// 先查索引；未命中或已失效（文件被改名、删除）时回退到遍历数据目录，并把找到的
+/// 映射写回索引。
 ///
 /// 返回的第二个值是**这次真正读了哪个文件**，而不是「按 `meta.id` 反推出来的规范路径」：
 /// 两者在文件被手工改名、或历史遗留了旧名字时会不一致，而写完之后要删掉的正是前者。
-async fn find_exclusive_anime(
-    index_available: bool,
-    bangumi_id: i64,
-) -> Result<(Anime, PathBuf), UpdateWithBangumiError> {
-    if index_available
-        && let Some(meta_id) = index::get_meta_id_of_bangumi_id(bangumi_id).await
+async fn find_exclusive_anime(bangumi_id: i64) -> Result<(Anime, PathBuf), UpdateWithBangumiError> {
+    if let Some(meta_id) = index::get_meta_id_of_bangumi_id(bangumi_id).await
         && let Some(found) = load_indexed(bangumi_id, &meta_id)
     {
         return Ok(found);
@@ -112,9 +104,7 @@ async fn find_exclusive_anime(
         .into_iter()
         .find(|(path, _)| *path == canonical)
         .unwrap_or((first_path, first));
-    if index_available {
-        index::set_anime_index_or_warn(&anime).await;
-    }
+    index::set_anime_index_or_warn(&anime).await;
     Ok((anime, path))
 }
 
@@ -237,10 +227,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn without_an_index_it_falls_back_to_scanning() {
-        // 索引不可用（`false`）时，定位必须退化成遍历数据目录，而不是直接失败。
-        // 这里用一个几乎不可能存在的 bangumi_id，走的正是遍历后未命中的分支。
-        let error = find_exclusive_anime(false, i64::MAX).await.unwrap_err();
+    async fn without_an_index_hit_it_falls_back_to_scanning() {
+        // 索引未命中（用几乎不可能存在的 bangumi_id）时，定位必须退化成遍历数据目录，
+        // 而不是直接失败。
+        let error = find_exclusive_anime(i64::MAX).await.unwrap_err();
         assert!(
             matches!(error, UpdateWithBangumiError::NotFound(id) if id == i64::MAX),
             "unexpected error: {error}"
